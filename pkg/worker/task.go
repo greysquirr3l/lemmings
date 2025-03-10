@@ -1,10 +1,20 @@
 package worker
 
 import (
+	"context"
 	"errors"
-	"fmt"
 	"time"
 )
+
+// Task represents a unit of work that can be executed by a Worker
+type Task interface {
+	Execute(ctx context.Context) (interface{}, error)
+	ID() string
+	Type() string
+	Priority() int
+	Validate() error
+	MaxRetries() int
+}
 
 // SimpleTask is a basic implementation of the Task interface
 type SimpleTask struct {
@@ -12,16 +22,16 @@ type SimpleTask struct {
 	TaskType     string
 	TaskPriority int
 	TaskRetries  int
-	TaskFunc     func() (interface{}, error)
+	TaskFunc     func(ctx context.Context) (interface{}, error)
 	Validator    func() error
 }
 
 // Execute runs the task function
-func (t *SimpleTask) Execute() (interface{}, error) {
+func (t *SimpleTask) Execute(ctx context.Context) (interface{}, error) {
 	if t.TaskFunc == nil {
 		return nil, errors.New("task function is nil")
 	}
-	return t.TaskFunc()
+	return t.TaskFunc(ctx)
 }
 
 // ID returns the task's identifier
@@ -59,7 +69,7 @@ func (t *SimpleTask) MaxRetries() int {
 }
 
 // NewSimpleTask creates a new simple task
-func NewSimpleTask(id, taskType string, fn func() (interface{}, error)) *SimpleTask {
+func NewSimpleTask(id, taskType string, fn func(ctx context.Context) (interface{}, error)) *SimpleTask {
 	return &SimpleTask{
 		TaskID:      id,
 		TaskType:    taskType,
@@ -91,15 +101,24 @@ type FunctionTask struct {
 	*SimpleTask
 	startTime time.Time
 	timeout   time.Duration
+	callback  func(result Result)
 }
 
 // NewFunctionTask creates a new function task
-func NewFunctionTask(id string, fn func() (interface{}, error)) *FunctionTask {
+func NewFunctionTask(id string, fn func(ctx context.Context) (interface{}, error)) *FunctionTask {
+	// For backward compatibility
+	ctxFn := fn
+	if fn == nil {
+		ctxFn = func(ctx context.Context) (interface{}, error) {
+			return nil, errors.New("task function is nil")
+		}
+	}
+
 	return &FunctionTask{
 		SimpleTask: &SimpleTask{
 			TaskID:      id,
 			TaskType:    "function",
-			TaskFunc:    fn,
+			TaskFunc:    ctxFn,
 			TaskRetries: 3,
 		},
 		startTime: time.Now(),
@@ -112,12 +131,22 @@ func (t *FunctionTask) WithTimeout(timeout time.Duration) *FunctionTask {
 	return t
 }
 
+// WithCallback sets a callback function that will be called with the task result
+func (t *FunctionTask) WithCallback(callback func(result Result)) *FunctionTask {
+	t.callback = callback
+	return t
+}
+
 // Execute runs the function with timeout if specified
-func (t *FunctionTask) Execute() (interface{}, error) {
+func (t *FunctionTask) Execute(ctx context.Context) (interface{}, error) {
 	// If no timeout is set, just execute normally
 	if t.timeout <= 0 {
-		return t.SimpleTask.Execute()
+		return t.SimpleTask.Execute(ctx)
 	}
+
+	// Create a timeout context
+	timeoutCtx, cancel := context.WithTimeout(ctx, t.timeout)
+	defer cancel()
 
 	// With timeout
 	resultCh := make(chan struct {
@@ -126,17 +155,32 @@ func (t *FunctionTask) Execute() (interface{}, error) {
 	}, 1)
 
 	go func() {
-		result, err := t.SimpleTask.Execute()
-		resultCh <- struct {
+		result, err := t.SimpleTask.Execute(timeoutCtx)
+		select {
+		case resultCh <- struct {
 			result interface{}
 			err    error
-		}{result, err}
+		}{result, err}:
+		case <-timeoutCtx.Done():
+			// Context was cancelled, no need to send results
+		}
 	}()
 
 	select {
 	case res := <-resultCh:
 		return res.result, res.err
-	case <-time.After(t.timeout):
-		return nil, fmt.Errorf("task execution timed out after %v", t.timeout)
+	case <-timeoutCtx.Done():
+		if errors.Is(timeoutCtx.Err(), context.DeadlineExceeded) {
+			return nil, &TaskTimeoutError{
+				TaskID:  t.TaskID,
+				Timeout: t.timeout,
+			}
+		}
+		return nil, timeoutCtx.Err()
 	}
+}
+
+// GetCallback returns the callback function
+func (t *FunctionTask) GetCallback() func(result Result) {
+	return t.callback
 }

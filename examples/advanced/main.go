@@ -35,7 +35,7 @@ func newCustomWorkerFactory() factory.WorkerFactory[worker.Worker] {
 	return factory.NewWorkerFactory(func(id int) (worker.Worker, error) {
 		baseWorker := worker.NewSimpleWorker(id, nil, nil, 3)
 		return &CustomWorker{
-			SimpleWorker: baseWorker,
+			SimpleWorker:   baseWorker,
 			processingTime: 0,
 		}, nil
 	})
@@ -94,7 +94,7 @@ func (tp *TaskProcessor) ProcessMath(count int, complexity int) error {
 		taskID := fmt.Sprintf("math-%d", i)
 
 		// Create a task that performs a CPU-intensive calculation
-		task := worker.NewFunctionTask(taskID, func() (interface{}, error) {
+		task := worker.NewFunctionTask(taskID, func(ctx context.Context) (interface{}, error) {
 			start := time.Now()
 
 			// Simulate CPU-intensive work
@@ -130,7 +130,7 @@ func (tp *TaskProcessor) ProcessIO(count int, ioTime time.Duration) error {
 		taskID := fmt.Sprintf("io-%d", i)
 
 		// Create a task that simulates I/O operations
-		task := worker.NewFunctionTask(taskID, func() (interface{}, error) {
+		task := worker.NewFunctionTask(taskID, func(ctx context.Context) (interface{}, error) {
 			start := time.Now()
 
 			// Simulate I/O wait
@@ -176,7 +176,7 @@ func (tp *TaskProcessor) ProcessMixed(count int) error {
 		switch taskType {
 		case 0:
 			// CPU-intensive task
-			task = worker.NewFunctionTask(taskID, func() (interface{}, error) {
+			task = worker.NewFunctionTask(taskID, func(ctx context.Context) (interface{}, error) {
 				start := time.Now()
 
 				// CPU-intensive work
@@ -197,7 +197,7 @@ func (tp *TaskProcessor) ProcessMixed(count int) error {
 
 		case 1:
 			// I/O-intensive task
-			task = worker.NewFunctionTask(taskID, func() (interface{}, error) {
+			task = worker.NewFunctionTask(taskID, func(ctx context.Context) (interface{}, error) {
 				start := time.Now()
 
 				// I/O wait
@@ -215,7 +215,7 @@ func (tp *TaskProcessor) ProcessMixed(count int) error {
 
 		case 2:
 			// Error-prone task
-			task = worker.NewFunctionTask(taskID, func() (interface{}, error) {
+			task = worker.NewFunctionTask(taskID, func(ctx context.Context) (interface{}, error) {
 				// 30% chance to fail
 				if rand.Intn(10) < 3 {
 					return nil, fmt.Errorf("random task failure")

@@ -11,6 +11,7 @@ Lemmings is a dynamic worker/manager library for Go applications that need to di
 - **Manager (`pkg/manager`)**: Core component that coordinates workers and distributes tasks
 - **Worker (`pkg/worker`)**: Worker implementation that processes tasks
 - **Task (`pkg/worker`)**: Interface and implementations for different task types
+- **Middleware (`pkg/middleware`)**: Middleware for cross-cutting concerns like logging and recovery
 
 ## Key Concepts
 
@@ -50,7 +51,7 @@ type CustomWorker struct {
 Tasks represent units of work:
 
 ```go
-task := worker.NewFunctionTask("task-id", func() (interface{}, error) {
+task := worker.NewFunctionTask("task-id", func(ctx context.Context) (interface{}, error) {
     // Task implementation
     return result, nil
 })
@@ -93,12 +94,25 @@ task := worker.NewFunctionTask("id", taskFunc).
     WithRetries(3)
 ```
 
+### Using Middleware
+
+```go
+// Create middleware chain
+chain := middleware.Chain(
+    middleware.LoggingMiddleware(),
+    middleware.RecoveryMiddleware(),
+)
+
+// Apply middleware to task
+wrappedTask := middleware.WrapTask(task, chain)
+```
+
 ## Development Guidelines
 
-1. **Resource Efficiency**: Always consider memory usage and resource cleanup
-2. **Concurrency Safety**: Use locks and atomic operations for shared data
-3. **Error Handling**: Wrap errors with context, use appropriate error types
-4. **Context Cancellation**: Respect context cancellation throughout the codebase
+1. **Context Awareness**: All task implementations should respect context cancellation
+2. **Resource Efficiency**: Always consider memory usage and resource cleanup
+3. **Concurrency Safety**: Use locks and atomic operations for shared data
+4. **Error Handling**: Wrap errors with context, use appropriate error types
 5. **Worker Scaling**: Ensure workers can be safely added/removed during operation
 
 ## Testing Approach
@@ -108,6 +122,7 @@ task := worker.NewFunctionTask("id", taskFunc).
 3. Include stress tests for resource management
 4. Test scaling under load
 5. Verify task retry behavior
+6. Ensure context cancellation is properly handled
 
 ## Architecture Diagram
 
@@ -133,3 +148,5 @@ task := worker.NewFunctionTask("id", taskFunc).
 - Specialized task types
 - Resource monitoring strategies
 - Scaling policies
+- Custom middleware
+- Priority-based scheduling

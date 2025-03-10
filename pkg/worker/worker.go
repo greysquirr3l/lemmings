@@ -7,16 +7,6 @@ import (
 	"time"
 )
 
-// Task represents a unit of work that can be executed by a Worker
-type Task interface {
-	Execute() (interface{}, error)
-	ID() string
-	Type() string
-	Priority() int
-	Validate() error
-	MaxRetries() int
-}
-
 // Result represents the outcome of a task execution
 type Result struct {
 	TaskID   string
@@ -25,6 +15,7 @@ type Result struct {
 	Duration time.Duration
 	Worker   int
 	Attempt  int
+	Task     Task // Reference to original task
 }
 
 // Worker interface defines the behavior of a worker
@@ -108,6 +99,7 @@ func (w *BaseWorker) ExecuteTask(ctx context.Context, task Task) {
 	var result Result
 	result.TaskID = task.ID()
 	result.Worker = w.id
+	result.Task = task
 
 	// Validate task
 	if err := task.Validate(); err != nil {
@@ -124,11 +116,11 @@ func (w *BaseWorker) ExecuteTask(ctx context.Context, task Task) {
 
 	var output interface{}
 	var err error
-	
+
 	start := time.Now()
 	for attempt := 0; attempt <= maxRetries; attempt++ {
 		result.Attempt = attempt + 1
-		
+
 		// Check if context is canceled before each attempt
 		select {
 		case <-ctx.Done():
@@ -140,9 +132,8 @@ func (w *BaseWorker) ExecuteTask(ctx context.Context, task Task) {
 			// Continue with execution
 		}
 
-		attemptStart := time.Now()
-		output, err = task.Execute()
-		_ = time.Since(attemptStart) // We'll just acknowledge it without storing in a variable
+		// Execute the task using context
+		output, err = task.Execute(ctx)
 
 		if err == nil {
 			// Task succeeded
@@ -151,7 +142,7 @@ func (w *BaseWorker) ExecuteTask(ctx context.Context, task Task) {
 			break
 		} else if attempt >= maxRetries {
 			// Task failed after all retries
-			result.Err = err
+			result.Err = NewTaskError(task.ID(), attempt+1, err.Error(), err)
 			result.Duration = time.Since(start)
 		} else {
 			// Prepare for retry with exponential backoff
@@ -207,7 +198,7 @@ type SimpleWorker struct {
 func NewSimpleWorker(id int, taskCh <-chan Task, resultCh chan<- Result, maxRetries int) *SimpleWorker {
 	baseWorker := NewBaseWorker(id, taskCh, resultCh, maxRetries)
 	ctx, cancel := context.WithCancel(context.Background())
-	
+
 	return &SimpleWorker{
 		BaseWorker: baseWorker,
 		ctx:        ctx,
@@ -220,7 +211,7 @@ func (w *SimpleWorker) Start(ctx context.Context) {
 	w.wg.Add(1)
 	go func() {
 		defer w.wg.Done()
-		
+
 		for {
 			select {
 			case <-ctx.Done():
@@ -228,11 +219,11 @@ func (w *SimpleWorker) Start(ctx context.Context) {
 			case <-w.ctx.Done():
 				return
 			case task, ok := <-w.taskCh:
-				if (!ok) {
+				if !ok {
 					// Task channel closed
 					return
 				}
-				
+
 				w.ExecuteTask(ctx, task)
 			}
 		}

@@ -14,17 +14,19 @@ instructions: |
   # Lemmings Project Guidelines
 
   ## Project Overview
-  This project is a Go library called "Lemmings" which provides a dynamic worker/manager system for distributing tasks across a pool of workers. The core functionality revolves around efficiently allocating resources and processing tasks.
+  Lemmings is a Go library providing a dynamic worker/manager system for distributing tasks across a pool of workers. The core functionality revolves around efficiently allocating resources and processing tasks with context awareness.
 
   ## Architecture
   - `internal/factory`: Generic factory pattern implementation
   - `internal/utils`: Resource monitoring and system metrics
   - `pkg/manager`: Manager coordination system
   - `pkg/worker`: Worker implementations and task interfaces
+  - `pkg/middleware`: Cross-cutting concerns like logging and recovery
   - `examples`: Sample usages of the library
 
   ## Coding Conventions
   - Follow Go idioms and standard library patterns
+  - All tasks and operations should be context-aware
   - Use generics to provide type safety where applicable
   - Provide clear error messages and handle errors at appropriate levels
   - Use context for cancellation and coordination
@@ -57,3 +59,4 @@ instructions: |
   2. Custom task types
   3. Tailored resource monitoring
   4. Custom scaling policies
+  5. Middleware for cross-cutting concerns

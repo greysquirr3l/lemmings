@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"sync"
 	"time"
 
@@ -28,18 +29,25 @@ type Manager struct {
 	started          bool
 	stats            ManagerStats
 	statsMu          sync.RWMutex
+	shutdownCh       chan struct{}
+	shutdownComplete chan struct{}
 }
 
 // ManagerStats tracks processing statistics
 type ManagerStats struct {
-	TasksSubmitted   int64
-	TasksCompleted   int64
-	TasksFailed      int64
-	TotalProcessTime time.Duration
-	StartTime        time.Time
-	AvgProcessTime   time.Duration
-	PeakWorkerCount  int
-	CurrentTaskCount int
+	TasksSubmitted    int64
+	TasksCompleted    int64
+	TasksFailed       int64
+	TotalProcessTime  time.Duration
+	StartTime         time.Time
+	AvgProcessTime    time.Duration
+	PeakWorkerCount   int
+	CurrentTaskCount  int
+	TasksWaiting      int64
+	CurrentMemPercent float64
+	MemUtilization    []float64 // Records memory utilization over time
+	WorkerUtilization []int     // Records worker count over time
+	LastUpdated       time.Time
 }
 
 // NewManager creates a new manager
@@ -82,16 +90,21 @@ func NewManager(workerFactory factory.WorkerFactory[worker.Worker], config Confi
 	ctx, cancel := context.WithCancel(context.Background())
 
 	m := &Manager{
-		config:        config,
-		resourceCtrl:  resourceCtrl,
-		workerFactory: workerFactory,
-		taskQueue:     make(chan worker.Task, maxQueue),
-		results:       make(chan worker.Result, maxQueue),
-		activeWorkers: make(map[int]worker.Worker),
-		ctx:           ctx,
-		cancel:        cancel,
+		config:           config,
+		resourceCtrl:     resourceCtrl,
+		workerFactory:    workerFactory,
+		taskQueue:        make(chan worker.Task, maxQueue),
+		results:          make(chan worker.Result, maxQueue),
+		activeWorkers:    make(map[int]worker.Worker),
+		ctx:              ctx,
+		cancel:           cancel,
+		shutdownCh:       make(chan struct{}),
+		shutdownComplete: make(chan struct{}),
 		stats: ManagerStats{
-			StartTime: time.Now(),
+			StartTime:         time.Now(),
+			LastUpdated:       time.Now(),
+			MemUtilization:    make([]float64, 0, 100),
+			WorkerUtilization: make([]int, 0, 100),
 		},
 	}
 
@@ -148,12 +161,29 @@ func (m *Manager) Start() error {
 			case <-ticker.C:
 				m.resourceCtrl.AdjustBasedOnResourceUsage()
 
-				m.activeWorkersMu.Lock()
+				// Update stats with current memory and worker usage
+				memStats := m.resourceCtrl.GetResourceMonitor().GetStats().GetMemStats()
+
+				m.statsMu.Lock()
 				currentCount := m.workerPool.GetActiveWorkerCount()
 				if currentCount > m.stats.PeakWorkerCount {
 					m.stats.PeakWorkerCount = currentCount
 				}
-				m.activeWorkersMu.Unlock()
+
+				// Record utilization metrics (keep last 100 points)
+				m.stats.CurrentMemPercent = memStats.UsagePercent
+				if len(m.stats.MemUtilization) >= 100 {
+					m.stats.MemUtilization = m.stats.MemUtilization[1:100]
+				}
+				m.stats.MemUtilization = append(m.stats.MemUtilization, memStats.UsagePercent)
+
+				if len(m.stats.WorkerUtilization) >= 100 {
+					m.stats.WorkerUtilization = m.stats.WorkerUtilization[1:100]
+				}
+				m.stats.WorkerUtilization = append(m.stats.WorkerUtilization, currentCount)
+
+				m.stats.LastUpdated = time.Now()
+				m.statsMu.Unlock()
 			}
 		}
 	}()
@@ -165,6 +195,46 @@ func (m *Manager) Start() error {
 		m.processResults()
 	}()
 
+	// Start graceful shutdown handler
+	m.wg.Add(1)
+	go func() {
+		defer m.wg.Done()
+		defer close(m.shutdownComplete)
+		<-m.shutdownCh
+
+		if m.config.Verbose {
+			log.Println("Manager beginning graceful shutdown")
+		}
+
+		// Stop accepting new tasks, but process existing ones
+		close(m.taskQueue)
+
+		// Set a timeout for remaining task completion
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		// Wait for tasks to complete or timeout
+		ticker := time.NewTicker(100 * time.Millisecond)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-shutdownCtx.Done():
+				if m.config.Verbose {
+					log.Println("Manager shutdown timeout reached")
+				}
+				return
+			case <-ticker.C:
+				if len(m.taskQueue) == 0 && len(m.results) == 0 {
+					if m.config.Verbose {
+						log.Println("Manager completed graceful shutdown")
+					}
+					return
+				}
+			}
+		}
+	}()
+
 	m.started = true
 	return nil
 }
@@ -172,21 +242,48 @@ func (m *Manager) Start() error {
 // Stop stops the manager and all workers
 func (m *Manager) Stop() {
 	m.Lock()
-	defer m.Unlock()
 
 	if !m.started {
+		m.Unlock()
 		return
 	}
 
+	// Begin graceful shutdown
+	select {
+	case m.shutdownCh <- struct{}{}:
+		if m.config.Verbose {
+			log.Println("Manager initiating graceful shutdown")
+		}
+	default:
+		// Shutdown already initiated
+	}
+
+	m.Unlock()
+
+	// Wait for graceful shutdown to complete with a timeout
+	select {
+	case <-m.shutdownComplete:
+		// Graceful shutdown completed
+	case <-time.After(32 * time.Second):
+		// Forceful shutdown after timeout
+		if m.config.Verbose {
+			log.Println("Manager forcefully shutting down")
+		}
+	}
+
+	// Now cancel everything and wait
 	m.cancel()
 	m.wg.Wait()
+
+	m.Lock()
 	m.started = false
+	m.Unlock()
 }
 
 // Submit submits a task for processing
 func (m *Manager) Submit(task worker.Task) error {
 	if !m.started {
-		return errors.New("manager not started")
+		return worker.ErrManagerNotStarted
 	}
 
 	select {
@@ -194,12 +291,13 @@ func (m *Manager) Submit(task worker.Task) error {
 		m.statsMu.Lock()
 		m.stats.TasksSubmitted++
 		m.stats.CurrentTaskCount++
+		m.stats.TasksWaiting++
 		m.statsMu.Unlock()
 		return nil
 	case <-m.ctx.Done():
-		return errors.New("manager shutting down")
+		return worker.ErrManagerShuttingDown
 	default:
-		return errors.New("task queue full")
+		return worker.ErrTaskQueueFull
 	}
 }
 
@@ -209,7 +307,7 @@ func (m *Manager) SubmitWithTimeout(task worker.Task, timeout time.Duration) err
 	defer cancel()
 
 	if !m.started {
-		return errors.New("manager not started")
+		return worker.ErrManagerNotStarted
 	}
 
 	select {
@@ -217,10 +315,11 @@ func (m *Manager) SubmitWithTimeout(task worker.Task, timeout time.Duration) err
 		m.statsMu.Lock()
 		m.stats.TasksSubmitted++
 		m.stats.CurrentTaskCount++
+		m.stats.TasksWaiting++
 		m.statsMu.Unlock()
 		return nil
 	case <-m.ctx.Done():
-		return errors.New("manager shutting down")
+		return worker.ErrManagerShuttingDown
 	case <-ctx.Done():
 		return errors.New("submission timeout")
 	}
@@ -229,7 +328,7 @@ func (m *Manager) SubmitWithTimeout(task worker.Task, timeout time.Duration) err
 // SubmitBatch submits multiple tasks
 func (m *Manager) SubmitBatch(tasks []worker.Task) (int, error) {
 	if !m.started {
-		return 0, errors.New("manager not started")
+		return 0, worker.ErrManagerNotStarted
 	}
 
 	submitted := 0
@@ -238,18 +337,26 @@ func (m *Manager) SubmitBatch(tasks []worker.Task) (int, error) {
 		case m.taskQueue <- task:
 			submitted++
 		case <-m.ctx.Done():
-			return submitted, errors.New("manager shutting down")
+			m.updateSubmittedStats(submitted)
+			return submitted, worker.ErrManagerShuttingDown
 		default:
-			return submitted, errors.New("task queue full")
+			m.updateSubmittedStats(submitted)
+			return submitted, worker.ErrTaskQueueFull
 		}
 	}
 
-	m.statsMu.Lock()
-	m.stats.TasksSubmitted += int64(submitted)
-	m.stats.CurrentTaskCount += submitted
-	m.statsMu.Unlock()
-
+	m.updateSubmittedStats(submitted)
 	return submitted, nil
+}
+
+// updateSubmittedStats updates statistics after task submission
+func (m *Manager) updateSubmittedStats(count int) {
+	m.statsMu.Lock()
+	defer m.statsMu.Unlock()
+
+	m.stats.TasksSubmitted += int64(count)
+	m.stats.CurrentTaskCount += count
+	m.stats.TasksWaiting += int64(count)
 }
 
 // processResults processes task results
@@ -258,15 +365,29 @@ func (m *Manager) processResults() {
 		select {
 		case <-m.ctx.Done():
 			return
-		case result := <-m.results:
+		case result, ok := <-m.results:
+			if !ok {
+				return // Channel closed
+			}
+
+			// Handle callback if task has one
+			if fnTask, ok := result.Task.(*worker.FunctionTask); ok {
+				if callback := fnTask.GetCallback(); callback != nil {
+					go callback(result)
+				}
+			}
+
 			m.statsMu.Lock()
 			m.stats.CurrentTaskCount--
+			m.stats.TasksWaiting--
 			if result.Err != nil {
 				m.stats.TasksFailed++
 			} else {
 				m.stats.TasksCompleted++
 				m.stats.TotalProcessTime += result.Duration
-				m.stats.AvgProcessTime = time.Duration(int64(m.stats.TotalProcessTime) / m.stats.TasksCompleted)
+				if m.stats.TasksCompleted > 0 {
+					m.stats.AvgProcessTime = time.Duration(int64(m.stats.TotalProcessTime) / m.stats.TasksCompleted)
+				}
 			}
 			m.statsMu.Unlock()
 		}
@@ -308,4 +429,24 @@ func (m *Manager) DisableDynamicScaling() {
 // ForceScaleWorkers manually scales workers to the specified count
 func (m *Manager) ForceScaleWorkers(count int) {
 	m.resourceCtrl.AdjustWorkerCount(count, "manual scaling")
+}
+
+// WaitForCompletion blocks until all tasks are processed or context is canceled
+func (m *Manager) WaitForCompletion(ctx context.Context) error {
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+			stats := m.GetStats()
+			if stats.TasksSubmitted == stats.TasksCompleted+stats.TasksFailed &&
+				m.GetTaskQueueLength() == 0 &&
+				stats.TasksSubmitted > 0 {
+				return nil
+			}
+		}
+	}
 }

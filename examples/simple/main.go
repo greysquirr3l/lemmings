@@ -43,7 +43,7 @@ func main() {
 		taskID := fmt.Sprintf("task-%d", i)
 
 		// Create a simple task
-		task := worker.NewFunctionTask(taskID, func() (interface{}, error) {
+		task := worker.NewFunctionTask(taskID, func(ctx context.Context) (interface{}, error) {
 			// Simulate work
 			duration := time.Duration(rand.Intn(500)+100) * time.Millisecond
 			time.Sleep(duration)
@@ -90,7 +90,7 @@ func main() {
 				activeWorkers, queueLength)
 
 			if stats.TasksCompleted+stats.TasksFailed >= stats.TasksSubmitted &&
-			   stats.TasksSubmitted > 0 && queueLength == 0 {
+				stats.TasksSubmitted > 0 && queueLength == 0 {
 				fmt.Println("All tasks processed!")
 				return
 			}
