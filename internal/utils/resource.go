@@ -15,10 +15,10 @@ const (
 	// Memory watermarks
 	DefaultMemoryLowWatermark  = 60 // Percentage of memory usage that's considered safe
 	DefaultMemoryHighWatermark = 75 // Percentage that triggers aggressive GC
-	
+
 	// Default interval between resource checks
 	DefaultCheckInterval = 500 * time.Millisecond
-	
+
 	// Default scale factors
 	DefaultScaleUpFactor   = 1.5 // Multiply current size by this when scaling up
 	DefaultScaleDownFactor = 0.5 // Multiply current size by this when scaling down
@@ -27,15 +27,15 @@ const (
 // ResourceMonitor monitors system resources and provides scaling recommendations
 type ResourceMonitor struct {
 	sync.RWMutex
-	stats            *SystemStats
-	memoryLowmark    float64
-	memoryHighmark   float64
-	checkInterval    time.Duration
-	lastCleanup      time.Time
-	cleanupThreshold float64
+	stats              *SystemStats
+	memoryLowmark      float64
+	memoryHighmark     float64
+	checkInterval      time.Duration
+	lastCleanup        time.Time
+	cleanupThreshold   float64
 	minCleanupInterval time.Duration
-	scaleDownDelay   time.Duration
-	lastScaleDown    time.Time
+	scaleDownDelay     time.Duration
+	lastScaleDown      time.Time
 }
 
 // NewResourceMonitor creates a new ResourceMonitor
@@ -112,9 +112,9 @@ func (rm *ResourceMonitor) Start(ctx context.Context) {
 // monitorMemory monitors memory usage and performs cleanup if needed
 func (rm *ResourceMonitor) monitorMemory() {
 	memUsage := rm.stats.GetMemUsagePercent()
-	
-	if memUsage > rm.cleanupThreshold && 
-	   time.Since(rm.lastCleanup) > rm.minCleanupInterval {
+
+	if memUsage > rm.cleanupThreshold &&
+		time.Since(rm.lastCleanup) > rm.minCleanupInterval {
 		log.Printf("Memory usage high (%.1f%%), performing cleanup", memUsage)
 		rm.cleanupMemory()
 		rm.Lock()
@@ -134,7 +134,7 @@ func (rm *ResourceMonitor) cleanupMemory() {
 func (rm *ResourceMonitor) ShouldScaleDown() bool {
 	rm.RLock()
 	defer rm.RUnlock()
-	
+
 	return rm.stats.GetMemUsagePercent() > rm.memoryHighmark
 }
 
@@ -142,9 +142,9 @@ func (rm *ResourceMonitor) ShouldScaleDown() bool {
 func (rm *ResourceMonitor) ShouldScaleUp() bool {
 	rm.RLock()
 	defer rm.RUnlock()
-	
+
 	return rm.stats.GetMemUsagePercent() < rm.memoryLowmark &&
-	       time.Since(rm.lastScaleDown) > rm.scaleDownDelay
+		time.Since(rm.lastScaleDown) > rm.scaleDownDelay
 }
 
 // RecordScaleDown records that a scale down has occurred

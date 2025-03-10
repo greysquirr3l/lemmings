@@ -67,13 +67,25 @@ func (s *SystemStats) UpdateMemStats() {
 	// Calculate memory usage as a percentage
 	usagePercent := float64(ms.Alloc) / float64(ms.Sys) * 100
 
+	// Fix: Convert ms.LastGC to int64 safely
+	var lastGCTime time.Time
+	if ms.LastGC > 0 {
+		// Check bounds before conversion to avoid overflow
+		if ms.LastGC <= uint64(1<<63-1) {
+			lastGCTime = time.Unix(0, int64(ms.LastGC))
+		} else {
+			// Use a fallback value if the value is too large
+			lastGCTime = time.Now()
+		}
+	}
+
 	// Create current memory stats snapshot
 	currentStats := MemStats{
 		UsagePercent:     usagePercent,
 		AllocatedBytes:   ms.Alloc,
 		SystemBytes:      ms.Sys,
 		GCPauseTimeNs:    ms.PauseNs[(ms.NumGC+255)%256],
-		LastGCTime:       time.Unix(0, int64(ms.LastGC)),
+		LastGCTime:       lastGCTime,
 		NumGC:            ms.NumGC,
 		HeapObjects:      ms.HeapObjects,
 		HeapInUseBytes:   ms.HeapInuse,

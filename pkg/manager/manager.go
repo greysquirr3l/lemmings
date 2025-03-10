@@ -22,7 +22,6 @@ type Manager struct {
 	taskQueue        chan worker.Task
 	results          chan worker.Result
 	activeWorkers    map[int]worker.Worker
-	activeWorkersMu  sync.RWMutex
 	ctx              context.Context
 	cancel           context.CancelFunc
 	wg               sync.WaitGroup
@@ -126,6 +125,7 @@ func NewManager(workerFactory factory.WorkerFactory[worker.Worker], config Confi
 }
 
 // Start begins processing tasks
+// Fix: Reduce cyclomatic complexity by extracting functions
 func (m *Manager) Start() error {
 	m.Lock()
 	defer m.Unlock()
@@ -141,13 +141,32 @@ func (m *Manager) Start() error {
 	}
 
 	// Start monitoring resources
+	m.startResourceMonitoring()
+
+	// Start resource adjustment
+	m.startResourceAdjustment()
+
+	// Start result handler
+	m.startResultHandler()
+
+	// Start graceful shutdown handler
+	m.startShutdownHandler()
+
+	m.started = true
+	return nil
+}
+
+// startResourceMonitoring starts the resource monitoring goroutine
+func (m *Manager) startResourceMonitoring() {
 	m.wg.Add(1)
 	go func() {
 		defer m.wg.Done()
 		m.resourceCtrl.GetResourceMonitor().Start(m.ctx)
 	}()
+}
 
-	// Start resource adjustment
+// startResourceAdjustment starts the worker scaling goroutine
+func (m *Manager) startResourceAdjustment() {
 	m.wg.Add(1)
 	go func() {
 		defer m.wg.Done()
@@ -160,42 +179,50 @@ func (m *Manager) Start() error {
 				return
 			case <-ticker.C:
 				m.resourceCtrl.AdjustBasedOnResourceUsage()
-
-				// Update stats with current memory and worker usage
-				memStats := m.resourceCtrl.GetResourceMonitor().GetStats().GetMemStats()
-
-				m.statsMu.Lock()
-				currentCount := m.workerPool.GetActiveWorkerCount()
-				if currentCount > m.stats.PeakWorkerCount {
-					m.stats.PeakWorkerCount = currentCount
-				}
-
-				// Record utilization metrics (keep last 100 points)
-				m.stats.CurrentMemPercent = memStats.UsagePercent
-				if len(m.stats.MemUtilization) >= 100 {
-					m.stats.MemUtilization = m.stats.MemUtilization[1:100]
-				}
-				m.stats.MemUtilization = append(m.stats.MemUtilization, memStats.UsagePercent)
-
-				if len(m.stats.WorkerUtilization) >= 100 {
-					m.stats.WorkerUtilization = m.stats.WorkerUtilization[1:100]
-				}
-				m.stats.WorkerUtilization = append(m.stats.WorkerUtilization, currentCount)
-
-				m.stats.LastUpdated = time.Now()
-				m.statsMu.Unlock()
+				m.updateUtilizationStats()
 			}
 		}
 	}()
+}
 
-	// Start result handler
+// updateUtilizationStats updates the manager stats with current utilization metrics
+func (m *Manager) updateUtilizationStats() {
+	memStats := m.resourceCtrl.GetResourceMonitor().GetStats().GetMemStats()
+
+	m.statsMu.Lock()
+	defer m.statsMu.Unlock()
+
+	currentCount := m.workerPool.GetActiveWorkerCount()
+	if currentCount > m.stats.PeakWorkerCount {
+		m.stats.PeakWorkerCount = currentCount
+	}
+
+	// Record utilization metrics (keep last 100 points)
+	m.stats.CurrentMemPercent = memStats.UsagePercent
+	if len(m.stats.MemUtilization) >= 100 {
+		m.stats.MemUtilization = m.stats.MemUtilization[1:100]
+	}
+	m.stats.MemUtilization = append(m.stats.MemUtilization, memStats.UsagePercent)
+
+	if len(m.stats.WorkerUtilization) >= 100 {
+		m.stats.WorkerUtilization = m.stats.WorkerUtilization[1:100]
+	}
+	m.stats.WorkerUtilization = append(m.stats.WorkerUtilization, currentCount)
+
+	m.stats.LastUpdated = time.Now()
+}
+
+// startResultHandler starts the result processing goroutine
+func (m *Manager) startResultHandler() {
 	m.wg.Add(1)
 	go func() {
 		defer m.wg.Done()
 		m.processResults()
 	}()
+}
 
-	// Start graceful shutdown handler
+// startShutdownHandler starts the graceful shutdown handler
+func (m *Manager) startShutdownHandler() {
 	m.wg.Add(1)
 	go func() {
 		defer m.wg.Done()
@@ -209,34 +236,35 @@ func (m *Manager) Start() error {
 		// Stop accepting new tasks, but process existing ones
 		close(m.taskQueue)
 
-		// Set a timeout for remaining task completion
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-
 		// Wait for tasks to complete or timeout
-		ticker := time.NewTicker(100 * time.Millisecond)
-		defer ticker.Stop()
+		m.waitForTaskCompletion()
+	}()
+}
 
-		for {
-			select {
-			case <-shutdownCtx.Done():
+// waitForTaskCompletion waits for tasks to complete during shutdown
+func (m *Manager) waitForTaskCompletion() {
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-shutdownCtx.Done():
+			if m.config.Verbose {
+				log.Println("Manager shutdown timeout reached")
+			}
+			return
+		case <-ticker.C:
+			if len(m.taskQueue) == 0 && len(m.results) == 0 {
 				if m.config.Verbose {
-					log.Println("Manager shutdown timeout reached")
+					log.Println("Manager completed graceful shutdown")
 				}
 				return
-			case <-ticker.C:
-				if len(m.taskQueue) == 0 && len(m.results) == 0 {
-					if m.config.Verbose {
-						log.Println("Manager completed graceful shutdown")
-					}
-					return
-				}
 			}
 		}
-	}()
-
-	m.started = true
-	return nil
+	}
 }
 
 // Stop stops the manager and all workers

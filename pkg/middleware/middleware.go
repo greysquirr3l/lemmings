@@ -3,6 +3,7 @@ package middleware
 import (
 	"context"
 	"log"
+	"math"
 	"time"
 
 	"github.com/greysquirr3l/lemmings/pkg/worker"
@@ -101,9 +102,9 @@ func RetryMiddleware(maxRetries int, backoffFactor float64) TaskMiddleware {
 				default:
 					// Calculate backoff with exponential increase
 					if attempt < maxRetries {
-						// Use integer calculation for the shift operation
-						backoffMs := int(50 * (1 << uint(attempt)))
-						backoff := time.Duration(float64(backoffMs)*time.Millisecond.Seconds()*backoffFactor) * time.Second
+						// Fix: Use math.Pow instead of bit shifting with floats
+						backoffMs := int(50 * math.Pow(2, float64(attempt)) * backoffFactor)
+						backoff := time.Duration(backoffMs) * time.Millisecond
 
 						// Cap maximum backoff
 						if backoff > 5*time.Second {

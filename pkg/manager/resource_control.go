@@ -21,11 +21,11 @@ type ResourceController struct {
 	config          Config
 
 	// Scaling metrics
-	successfulBatches    int
-	consecutiveScaleUps  int
-	lastScaleAction      time.Time
-	scaleHistory         []ScaleEvent
-	scalingEnabled       bool
+	successfulBatches   int
+	consecutiveScaleUps int
+	lastScaleAction     time.Time
+	scaleHistory        []ScaleEvent
+	scalingEnabled      bool
 }
 
 // ScaleEvent represents a scaling action
@@ -87,7 +87,7 @@ func (rc *ResourceController) AdjustWorkerCount(newCount int, reason string) {
 				log.Printf("Warning: Worker control channel full, scale-up incomplete")
 				// Adjust our count to reflect reality
 				newCount = rc.activeWorkers + i
-				break
+				return // Fixed: Return instead of break to exit function
 			}
 		}
 	} else {
@@ -100,7 +100,7 @@ func (rc *ResourceController) AdjustWorkerCount(newCount int, reason string) {
 				log.Printf("Warning: Worker control channel full, scale-down incomplete")
 				// Adjust our count to reflect reality
 				newCount = rc.activeWorkers - i
-				break
+				return // Fixed: Return instead of break to exit function
 			}
 		}
 		rc.monitor.RecordScaleDown()
@@ -141,7 +141,7 @@ func (rc *ResourceController) AdjustBasedOnResourceUsage() {
 		rc.AdjustWorkerCount(newWorkers, "high memory usage")
 
 		// Pause processing if memory is critically high
-		if rc.monitor.GetStats().GetMemUsagePercent() > rc.config.HighMemoryMark + 10 {
+		if rc.monitor.GetStats().GetMemUsagePercent() > rc.config.HighMemoryMark+10 {
 			select {
 			case rc.pauseProcessing <- true:
 				log.Printf("Pausing processing due to critically high memory usage (%.1f%%)",
@@ -169,7 +169,7 @@ func (rc *ResourceController) AdjustBasedOnResourceUsage() {
 
 		// Scale up if we've had enough successful batches
 		if rc.successfulBatches >= rc.config.MinSuccessfulBatches &&
-		   time.Since(rc.lastScaleAction) >= rc.config.ScaleUpDelay {
+			time.Since(rc.lastScaleAction) >= rc.config.ScaleUpDelay {
 
 			if rc.consecutiveScaleUps < rc.config.MaxConsecutiveScales {
 				// Scale up by the configured factor

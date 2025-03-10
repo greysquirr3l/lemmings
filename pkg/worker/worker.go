@@ -90,6 +90,7 @@ func (w *BaseWorker) Stats() WorkerStats {
 }
 
 // ExecuteTask executes a task and handles result routing
+// Fix: Reduce cyclomatic complexity by extracting functions
 func (w *BaseWorker) ExecuteTask(ctx context.Context, task Task) {
 	w.Lock()
 	w.stats.IdleTime += time.Since(w.stats.LastTaskTime)
@@ -109,6 +110,11 @@ func (w *BaseWorker) ExecuteTask(ctx context.Context, task Task) {
 	}
 
 	// Execute with retry logic
+	w.executeWithRetries(ctx, task, &result)
+}
+
+// executeWithRetries handles the retry logic for task execution
+func (w *BaseWorker) executeWithRetries(ctx context.Context, task Task, result *Result) {
 	maxRetries := task.MaxRetries()
 	if maxRetries <= 0 {
 		maxRetries = w.maxRetries
@@ -126,7 +132,7 @@ func (w *BaseWorker) ExecuteTask(ctx context.Context, task Task) {
 		case <-ctx.Done():
 			result.Err = ctx.Err()
 			result.Duration = time.Since(start)
-			w.sendResult(result)
+			w.sendResult(*result)
 			return
 		default:
 			// Continue with execution
@@ -146,25 +152,46 @@ func (w *BaseWorker) ExecuteTask(ctx context.Context, task Task) {
 			result.Duration = time.Since(start)
 		} else {
 			// Prepare for retry with exponential backoff
-			backoffDuration := time.Duration(1<<uint(attempt)) * 10 * time.Millisecond
-			if backoffDuration > 1*time.Second {
-				backoffDuration = 1 * time.Second
-			}
-
-			select {
-			case <-ctx.Done():
-				result.Err = ctx.Err()
-				result.Duration = time.Since(start)
-				w.sendResult(result)
-				return
-			case <-time.After(backoffDuration):
-				// Continue to next attempt
+			if !w.waitForRetry(ctx, attempt, start, result) {
+				return // Context was canceled during wait
 			}
 		}
 	}
 
 	// Update statistics
+	w.updateTaskStats(result)
+	w.sendResult(*result)
+}
+
+// waitForRetry handles the backoff wait between retry attempts
+func (w *BaseWorker) waitForRetry(ctx context.Context, attempt int, start time.Time, result *Result) bool {
+	// Fix: Avoid integer overflow by using small shift values
+	// Only shift up to 20 to avoid potential overflow
+	shift := attempt
+	if shift > 20 {
+		shift = 20
+	}
+	backoffDuration := time.Duration(1<<shift) * 10 * time.Millisecond
+	if backoffDuration > 1*time.Second {
+		backoffDuration = 1 * time.Second
+	}
+
+	select {
+	case <-ctx.Done():
+		result.Err = ctx.Err()
+		result.Duration = time.Since(start)
+		w.sendResult(*result)
+		return false
+	case <-time.After(backoffDuration):
+		return true // Continue to next attempt
+	}
+}
+
+// updateTaskStats updates worker statistics after task execution
+func (w *BaseWorker) updateTaskStats(result *Result) {
 	w.Lock()
+	defer w.Unlock()
+
 	if result.Err != nil {
 		w.stats.TasksFailed++
 	} else {
@@ -172,9 +199,6 @@ func (w *BaseWorker) ExecuteTask(ctx context.Context, task Task) {
 	}
 	w.stats.TotalDuration += result.Duration
 	w.stats.LastTaskTime = time.Now()
-	w.Unlock()
-
-	w.sendResult(result)
 }
 
 // sendResult sends the task result to the result channel

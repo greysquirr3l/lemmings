@@ -47,7 +47,12 @@ func (pq *PriorityQueue) Pop() Task {
 		return nil
 	}
 
-	item := heap.Pop(&pq.queue).(*taskItem)
+	// Fix: Add type assertion error check
+	rawItem := heap.Pop(&pq.queue)
+	item, ok := rawItem.(*taskItem)
+	if !ok {
+		return nil
+	}
 	return item.task
 }
 
@@ -79,28 +84,33 @@ type taskItem struct {
 }
 
 // taskHeap implements heap.Interface
+// Fix: Use pointer receiver consistently
 type taskHeap []*taskItem
 
-func (h taskHeap) Len() int { return len(h) }
+func (h *taskHeap) Len() int { return len(*h) }
 
 // Higher priority values have higher priority in the queue
-func (h taskHeap) Less(i, j int) bool {
+func (h *taskHeap) Less(i, j int) bool {
 	// First compare by priority (higher value = higher priority)
-	if h[i].priority != h[j].priority {
-		return h[i].priority > h[j].priority
+	if (*h)[i].priority != (*h)[j].priority {
+		return (*h)[i].priority > (*h)[j].priority
 	}
 	// If priorities are equal, compare by timestamp (older = higher priority)
-	return h[i].timestamp < h[j].timestamp
+	return (*h)[i].timestamp < (*h)[j].timestamp
 }
 
-func (h taskHeap) Swap(i, j int) {
-	h[i], h[j] = h[j], h[i]
-	h[i].index = i
-	h[j].index = j
+func (h *taskHeap) Swap(i, j int) {
+	(*h)[i], (*h)[j] = (*h)[j], (*h)[i]
+	(*h)[i].index = i
+	(*h)[j].index = j
 }
 
 func (h *taskHeap) Push(x interface{}) {
-	item := x.(*taskItem)
+	// Fix: Add type assertion error check
+	item, ok := x.(*taskItem)
+	if !ok {
+		return
+	}
 	*h = append(*h, item)
 	item.index = len(*h) - 1
 }

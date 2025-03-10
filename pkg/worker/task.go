@@ -162,7 +162,7 @@ func (t *FunctionTask) Execute(ctx context.Context) (interface{}, error) {
 			err    error
 		}{result, err}:
 		case <-timeoutCtx.Done():
-			// Context was cancelled, no need to send results
+			// Context was canceled, no need to send results
 		}
 	}()
 

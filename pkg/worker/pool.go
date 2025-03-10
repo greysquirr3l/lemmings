@@ -145,6 +145,7 @@ func (p *Pool) stopAllWorkers() {
 }
 
 // Scale adjusts the pool size
+// Fix: Reduce cyclomatic complexity by extracting functions
 func (p *Pool) Scale(delta int) (added, removed int) {
 	p.Lock()
 	defer p.Unlock()
@@ -153,7 +154,21 @@ func (p *Pool) Scale(delta int) (added, removed int) {
 		return 0, 0
 	}
 
-	// Calculate new size
+	// Calculate new size with bounds checking
+	newSize := p.calculateNewSize(delta)
+
+	// Handle scaling up or down
+	if delta > 0 {
+		added = p.scaleUp(newSize)
+	} else if delta < 0 {
+		removed = p.scaleDown(newSize)
+	}
+
+	return added, removed
+}
+
+// calculateNewSize determines the new pool size based on constraints
+func (p *Pool) calculateNewSize(delta int) int {
 	newSize := len(p.workers) + delta
 	if newSize < 1 {
 		newSize = 1
@@ -161,29 +176,51 @@ func (p *Pool) Scale(delta int) (added, removed int) {
 	if newSize > p.maxSize {
 		newSize = p.maxSize
 	}
+	return newSize
+}
 
-	// Adjust workers
-	if delta > 0 {
-		// Add workers
-		for i := 0; i < delta && len(p.workers) < newSize; i++ {
-			if err := p.addWorker(); err != nil {
-				log.Printf("Error adding worker: %v", err)
-				break
-			}
-			added++
+// scaleUp adds workers to the pool
+func (p *Pool) scaleUp(targetSize int) int {
+	added := 0
+	currentSize := len(p.workers)
+
+	// Don't try to add more than needed
+	toAdd := targetSize - currentSize
+	if toAdd <= 0 {
+		return 0
+	}
+
+	for i := 0; i < toAdd && len(p.workers) < targetSize; i++ {
+		if err := p.addWorker(); err != nil {
+			log.Printf("Error adding worker: %v", err)
+			break
 		}
-	} else if delta < 0 {
-		// Remove workers
-		for i := 0; i < -delta && len(p.workers) > newSize; i++ {
-			if p.removeWorker() {
-				removed++
-			} else {
-				break
-			}
+		added++
+	}
+
+	return added
+}
+
+// scaleDown removes workers from the pool
+func (p *Pool) scaleDown(targetSize int) int {
+	removed := 0
+	currentSize := len(p.workers)
+
+	// Don't try to remove more than needed
+	toRemove := currentSize - targetSize
+	if toRemove <= 0 {
+		return 0
+	}
+
+	for i := 0; i < toRemove && len(p.workers) > targetSize; i++ {
+		if p.removeWorker() {
+			removed++
+		} else {
+			break
 		}
 	}
 
-	return added, removed
+	return removed
 }
 
 // Size returns the current pool size
