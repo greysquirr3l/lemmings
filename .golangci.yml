@@ -1,0 +1,169 @@
+run:
+  timeout: 5m
+  concurrency: 4
+  issues-exit-code: 1
+  tests: true
+linters:
+  enable:
+    - errcheck
+    - govet
+    - ineffassign
+    - staticcheck
+    - typecheck
+    - gosec
+    - goconst # Finds repeated strings that could be constants
+    - exhaustive # Checks exhaustiveness of enum switch statements
+    - gocyclo # Checks function complexity
+    - misspell # Finds commonly misspelled English words
+    - copyloopvar # Checks for pointers to enclosing loop variables
+  disable:
+    - prealloc
+  disable-all: false
+  presets:
+    - bugs
+    - unused
+  fast: false
+
+linters-settings:
+  errcheck:
+    check-type-assertions: true
+    check-blank: true
+    # Exclude functions where ignoring errors is typically safe
+    exclude-functions:
+      - (*database/sql.Stmt).Close
+      - io.Closer.Close
+  dogsled:
+    max-blank-identifiers: 2
+  dupl:
+    threshold: 100
+  funlen:
+    lines: 60
+    statements: 40
+  gocognit:
+    min-complexity: 10
+  nestif:
+    min-complexity: 4
+  goconst:
+    min-len: 3
+    min-occurrences: 3
+  gocritic:
+    enabled-checks:
+      - rangeValCopy
+    disabled-checks:
+      - regexpMust
+    enabled-tags:
+      - performance
+    disabled-tags:
+      - experimental
+    settings:
+      captLocal:
+        paramsOnly: true
+      rangeValCopy:
+        sizeThreshold: 32
+  gocyclo:
+    min-complexity: 10
+  godot:
+    scope: all # Updated from deprecated "check-all" option
+  godox:
+    keywords:
+      - NOTE
+      - OPTIMIZE
+      - HACK
+  gofmt:
+    simplify: true
+  goimports:
+    local-prefixes: github.com/greysquirr3l/lashes
+  gomodguard:
+    allowed:
+      modules: []
+      domains: []
+    blocked:
+      modules: []
+  govet:
+    settings:
+      printf:
+        funcs:
+          - (github.com/golangci/golangci-lint/pkg/logutils.Log).Infof
+          - (github.com/golangci/golangci-lint/pkg/logutils.Log).Warnf
+          - (github.com/golangci/golangci-lint/pkg/logutils.Log).Errorf
+          - (github.com/golangci/golangci-lint/pkg/logutils.Log).Fatalf
+    enable:
+      - atomicalign
+    enable-all: false
+    disable:
+      - shadow
+    disable-all: false
+  lll:
+    line-length: 120
+    tab-width: 1
+  misspell:
+    locale: US
+    ignore-words:
+      - someword
+  nakedret:
+    max-func-lines: 30
+  prealloc:
+    simple: true
+    range-loops: true
+    for-loops: false
+  testpackage:
+    skip-regexp: (export|internal)_test\.go
+  unparam:
+    check-exported: false
+  whitespace:
+    multi-if: false
+    multi-func: false
+  wsl:
+    strict-append: true
+    allow-assign-and-call: true
+    allow-multiline-assign: true
+    allow-cuddle-declarations: false
+    allow-trailing-comment: false
+    force-case-trailing-whitespace: 0
+    force-err-cuddling: false
+    allow-separated-leading-comment: false
+
+issues:
+  exclude:
+    - abcdef
+  exclude-rules:
+    - path: _test\.go
+      linters:
+        - gocyclo
+        - errcheck
+        - dupl
+        - gosec
+    - path: internal/hmac/
+      text: "weak cryptographic primitive"
+      linters:
+        - gosec
+    - linters:
+        - staticcheck
+      text: "SA9003:"
+    - linters:
+        - lll
+      source: "^//go:generate "
+    # Add exclusion for unused directive warning
+    - linters:
+        - unused
+      source: "nolint:unused"
+    # Add exclusion for references to weak random functions in specific contexts
+    - path: internal/rotation/strategy.go
+      text: "G404:"
+      linters:
+        - gosec
+    # Update the unused exclusion to handle both ways of specifying the directive
+    - linters:
+        - unused
+      source: "nolint:unused"
+    # Also exclude it when specified with a comment
+    - linters:
+        - unused
+      source: "nolint:unused //"
+  exclude-use-default: false
+  max-issues-per-linter: 0
+  max-same-issues: 0
+
+output:
+  print-issued-lines: true
+  print-linter-name: true

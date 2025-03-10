@@ -1,0 +1,67 @@
+# Deny everything by default
+*
+!*/
+
+# Allow specific file types and patterns
+!*.go
+!*.md
+# !*.txt
+!*.mod
+!*.sum
+!*.yaml
+!*.yml
+!*.json
+!Makefile
+!Dockerfile
+!LICENSE
+!.gitignore
+
+# Go specific ignores
+bin/
+vendor/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+go.work
+
+# macOS specific ignores
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon
+._*
+.DocumentRevisions-V100
+.fseventsd
+.Spotlight-V100
+.TemporaryItems
+.Trashes
+.VolumeIcon.icns
+.com.apple.timemachine.donotpresent
+
+# Editor/IDE specific files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Project specific
+coverage.out
+coverage.html
+dist/
+tmp/
+profile.out
+performance.log
+
+# Test binary, built with `go test -c`
+*.test
+
+# Output of the go coverage tool
+*.out
+
+# Dependency directories (remove if using go modules)
+Godeps/

@@ -1,0 +1,59 @@
+name: Lemmings Project Guide
+description: Guidelines for developing with the Lemmings worker/manager library
+features:
+  codebase_context:
+    enabled: true
+  advanced_analysis:
+    enabled: true
+  code_review:
+    enabled: true
+  project_management:
+    enabled: false
+
+instructions: |
+  # Lemmings Project Guidelines
+
+  ## Project Overview
+  This project is a Go library called "Lemmings" which provides a dynamic worker/manager system for distributing tasks across a pool of workers. The core functionality revolves around efficiently allocating resources and processing tasks.
+
+  ## Architecture
+  - `internal/factory`: Generic factory pattern implementation
+  - `internal/utils`: Resource monitoring and system metrics
+  - `pkg/manager`: Manager coordination system
+  - `pkg/worker`: Worker implementations and task interfaces
+  - `examples`: Sample usages of the library
+
+  ## Coding Conventions
+  - Follow Go idioms and standard library patterns
+  - Use generics to provide type safety where applicable
+  - Provide clear error messages and handle errors at appropriate levels
+  - Use context for cancellation and coordination
+  - Design for concurrent safety
+
+  ## Implementation Guidelines
+  1. Workers should scale based on resource usage
+  2. Tasks should be processable in parallel
+  3. All public APIs should be well-documented
+  4. Respect context cancellation everywhere
+  5. Use channels for coordination between components
+  6. Prefer immutability for shared data
+  7. Use factory pattern for component creation
+
+  ## Resource Guidelines
+  1. Aim for efficient memory usage
+  2. Ensure workers can be safely scaled down
+  3. Perform cleanup when resources are no longer needed
+  4. Monitor memory pressure and adjust accordingly
+
+  ## Error Handling
+  1. Return errors rather than panicking
+  2. Use error wrapping with fmt.Errorf and %w
+  3. Handle task failures with configurable retry policies
+  4. Log appropriate context with errors
+
+  ## Extensibility
+  The library is designed to be extended through:
+  1. Custom worker implementations
+  2. Custom task types
+  3. Tailored resource monitoring
+  4. Custom scaling policies
