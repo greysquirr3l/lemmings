@@ -1,3 +1,5 @@
+// Package middleware provides components for wrapping task execution with cross-cutting concerns.
+// It includes middleware for logging, recovery from panics, timeouts, and retries.
 package middleware
 
 import (
@@ -9,13 +11,18 @@ import (
 	"github.com/greysquirr3l/lemmings/pkg/worker"
 )
 
-// TaskMiddleware defines a function that wraps task execution
+// TaskMiddleware defines a function that wraps task execution with additional behavior.
+// Middleware can perform actions before and after task execution, modify the context,
+// handle errors, add retries, etc.
 type TaskMiddleware func(next TaskHandlerFunc) TaskHandlerFunc
 
-// TaskHandlerFunc defines the function signature for handling tasks
+// TaskHandlerFunc defines the function signature for handling tasks.
+// It executes a task with the given context and returns the result or an error.
 type TaskHandlerFunc func(ctx context.Context, task worker.Task) (interface{}, error)
 
-// Chain combines multiple middleware into a single middleware
+// Chain combines multiple middleware into a single middleware.
+// Middleware are executed in reverse order of the provided slice,
+// meaning the first middleware in the slice will be the outermost wrapper.
 func Chain(middleware ...TaskMiddleware) TaskMiddleware {
 	return func(next TaskHandlerFunc) TaskHandlerFunc {
 		for i := len(middleware) - 1; i >= 0; i-- {
@@ -25,7 +32,8 @@ func Chain(middleware ...TaskMiddleware) TaskMiddleware {
 	}
 }
 
-// LoggingMiddleware logs execution time and errors
+// LoggingMiddleware creates middleware that logs execution time and errors.
+// It logs successful task completion with duration and logs failures with error details.
 func LoggingMiddleware() TaskMiddleware {
 	return func(next TaskHandlerFunc) TaskHandlerFunc {
 		return func(ctx context.Context, task worker.Task) (interface{}, error) {

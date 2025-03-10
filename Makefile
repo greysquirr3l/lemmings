@@ -191,6 +191,59 @@ version: ## Show version information
 	@echo "${COLOR_BLUE}Git commit: ${COLOR_GREEN}$(GIT_COMMIT)${COLOR_RESET}"
 	@echo "${COLOR_BLUE}Build time: ${COLOR_GREEN}$(BUILD_TIME)${COLOR_RESET}"
 
+# Git related targets
+.PHONY: git-check
+git-check: ## Check Git authentication status
+	@echo "${COLOR_BLUE}Checking Git authentication status...${COLOR_RESET}"
+	@chmod +x ./scripts/ssh-helper.sh
+	@./scripts/ssh-helper.sh status
+	@./scripts/ssh-helper.sh test
+
+.PHONY: git-reinit
+git-reinit: ## Reinitialize Git authentication
+	@echo "${COLOR_BLUE}Reinitializing Git authentication...${COLOR_RESET}"
+	@chmod +x ./scripts/ssh-helper.sh
+	@./scripts/ssh-helper.sh reinit
+
+.PHONY: git-find-keys
+git-find-keys: ## Find available authentication keys
+	@echo "${COLOR_BLUE}Finding available authentication keys...${COLOR_RESET}"
+	@chmod +x ./scripts/ssh-helper.sh
+	@./scripts/ssh-helper.sh find
+
+.PHONY: git-gpg-setup
+git-gpg-setup: ## Set up GPG key for Git signing
+	@echo "${COLOR_BLUE}Setting up GPG key for Git...${COLOR_RESET}"
+	@chmod +x ./scripts/ssh-helper.sh
+	@read -p "Enter GPG key ID: " KEYID && \
+	./scripts/ssh-helper.sh gpg $$KEYID
+
+.PHONY: git-creds
+git-creds: ## Set up Git credentials helper
+	@echo "${COLOR_BLUE}Setting up Git credentials helper...${COLOR_RESET}"
+	@chmod +x ./scripts/ssh-helper.sh
+	@./scripts/ssh-helper.sh credentials
+
+.PHONY: git-tag
+git-tag: git-check ## Create a new Git tag
+	@echo "${COLOR_BLUE}Current version: ${COLOR_GREEN}$(VERSION)${COLOR_RESET}"
+	@read -p "Enter new version tag (e.g. v1.0.0): " TAG && \
+	git tag -a $$TAG -m "Release $$TAG" && \
+	echo "${COLOR_GREEN}Created tag: $$TAG${COLOR_RESET}" && \
+	echo "Use 'git push origin $$TAG' to push the tag."
+
+.PHONY: git-push
+git-push: git-check ## Push to Git repository
+	@echo "${COLOR_BLUE}Pushing to Git repository...${COLOR_RESET}"
+	@git push || (echo "${COLOR_YELLOW}Git push failed. Trying to reinitialize authentication...${COLOR_RESET}" && \
+	make git-reinit && git push)
+
+.PHONY: git-pull
+git-pull: git-check ## Pull from Git repository
+	@echo "${COLOR_BLUE}Pulling from Git repository...${COLOR_RESET}"
+	@git pull || (echo "${COLOR_YELLOW}Git pull failed. Trying to reinitialize authentication...${COLOR_RESET}" && \
+	make git-reinit && git pull)
+
 .PHONY: help
 help: ## Display this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "${COLOR_GREEN}%-20s${COLOR_RESET} %s\n", $$1, $$2}'

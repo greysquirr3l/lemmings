@@ -1,3 +1,4 @@
+// Package worker provides implementations for tasks and workers.
 package worker
 
 import (
@@ -6,14 +7,17 @@ import (
 	"time"
 )
 
-// PriorityQueue implements a thread-safe priority queue for tasks
+// PriorityQueue implements a thread-safe priority queue for tasks.
+// It ensures that tasks with higher priority values are processed first.
+// When priorities are equal, tasks are processed in FIFO order based on insertion time.
 type PriorityQueue struct {
 	mu    sync.RWMutex
 	queue taskHeap
 	count int
 }
 
-// NewPriorityQueue creates a new priority queue
+// NewPriorityQueue creates a new empty priority queue.
+// Returns a pointer to the created PriorityQueue.
 func NewPriorityQueue() *PriorityQueue {
 	pq := &PriorityQueue{
 		queue: make(taskHeap, 0),
@@ -22,7 +26,9 @@ func NewPriorityQueue() *PriorityQueue {
 	return pq
 }
 
-// Push adds a task to the queue
+// Push adds a task to the queue.
+// Tasks with higher priority values will be popped before tasks with lower priorities.
+// Tasks with the same priority will be popped in FIFO order.
 func (pq *PriorityQueue) Push(task Task) {
 	pq.mu.Lock()
 	defer pq.mu.Unlock()
@@ -38,7 +44,9 @@ func (pq *PriorityQueue) Push(task Task) {
 	heap.Push(&pq.queue, item)
 }
 
-// Pop removes and returns the highest priority task
+// Pop removes and returns the highest priority task.
+// If the queue is empty, it returns nil.
+// Tasks with higher priority values will be popped first.
 func (pq *PriorityQueue) Pop() Task {
 	pq.mu.Lock()
 	defer pq.mu.Unlock()
@@ -56,14 +64,15 @@ func (pq *PriorityQueue) Pop() Task {
 	return item.task
 }
 
-// Len returns the number of tasks in the queue
+// Len returns the number of tasks currently in the queue.
 func (pq *PriorityQueue) Len() int {
 	pq.mu.RLock()
 	defer pq.mu.RUnlock()
 	return pq.queue.Len()
 }
 
-// Peek returns the highest priority task without removing it
+// Peek returns the highest priority task without removing it.
+// If the queue is empty, it returns nil.
 func (pq *PriorityQueue) Peek() Task {
 	pq.mu.RLock()
 	defer pq.mu.RUnlock()
@@ -75,7 +84,8 @@ func (pq *PriorityQueue) Peek() Task {
 	return pq.queue[0].task
 }
 
-// taskItem represents an item in the priority queue
+// taskItem represents an item in the priority queue.
+// It wraps a Task with additional metadata needed for queue operations.
 type taskItem struct {
 	task      Task
 	priority  int
@@ -83,8 +93,7 @@ type taskItem struct {
 	index     int   // Index in the heap array
 }
 
-// taskHeap implements heap.Interface
-// Fix: Use pointer receiver consistently
+// taskHeap implements heap.Interface for task priority management.
 type taskHeap []*taskItem
 
 func (h *taskHeap) Len() int { return len(*h) }

@@ -1,3 +1,4 @@
+// Package worker provides interfaces and implementations for tasks and workers.
 package worker
 
 import (
@@ -6,35 +7,93 @@ import (
 	"time"
 )
 
-// Task represents a unit of work that can be executed by a Worker
+// Task represents a unit of work that can be executed by a worker.
+// Tasks have an identifier, type, and priority, and can be executed
+// within a context. They also specify retry behavior and can be validated.
 type Task interface {
-	Execute(ctx context.Context) (interface{}, error)
+	// ID returns the unique identifier for this task.
 	ID() string
+
+	// Type returns the type of this task, useful for categorization.
 	Type() string
+
+	// Priority returns the priority level of this task.
+	// Higher values indicate higher priority.
 	Priority() int
-	Validate() error
+
+	// MaxRetries returns the maximum number of retry attempts allowed for this task.
 	MaxRetries() int
+
+	// Validate checks if the task is valid and can be executed.
+	// Returns an error if the task is invalid.
+	Validate() error
+
+	// Execute runs the task and returns its result or an error.
+	// The provided context can be used to signal cancellation or timeout.
+	Execute(ctx context.Context) (interface{}, error)
 }
 
-// SimpleTask is a basic implementation of the Task interface
+// TaskFunc is a function that can be executed as a task.
+// It accepts a context and returns a result or an error.
+type TaskFunc func(ctx context.Context) (interface{}, error)
+
+// SimpleTask is a basic implementation of the Task interface.
 type SimpleTask struct {
 	TaskID       string
 	TaskType     string
 	TaskPriority int
-	TaskRetries  int
-	TaskFunc     func(ctx context.Context) (interface{}, error)
-	Validator    func() error
+	MaxRetry     int
+	Function     TaskFunc
+	ValidateFunc func() error
+	Timeout      time.Duration
+	Callback     func(Result)
 }
 
-// Execute runs the task function
-func (t *SimpleTask) Execute(ctx context.Context) (interface{}, error) {
-	if t.TaskFunc == nil {
-		return nil, errors.New("task function is nil")
+// NewSimpleTask creates a new SimpleTask with the specified ID, type, and function.
+// Returns a pointer to the created SimpleTask.
+func NewSimpleTask(id, taskType string, fn TaskFunc) *SimpleTask {
+	return &SimpleTask{
+		TaskID:   id,
+		TaskType: taskType,
+		Function: fn,
+		MaxRetry: 3,
 	}
-	return t.TaskFunc(ctx)
 }
 
-// ID returns the task's identifier
+// WithPriority sets the priority of the task and returns the modified task.
+// Higher values indicate higher priority.
+func (t *SimpleTask) WithPriority(priority int) *SimpleTask {
+	t.TaskPriority = priority
+	return t
+}
+
+// WithRetries sets the maximum number of retry attempts for the task and returns the modified task.
+func (t *SimpleTask) WithRetries(retries int) *SimpleTask {
+	t.MaxRetry = retries
+	return t
+}
+
+// WithTimeout sets a timeout duration for task execution and returns the modified task.
+func (t *SimpleTask) WithTimeout(timeout time.Duration) *SimpleTask {
+	t.Timeout = timeout
+	return t
+}
+
+// WithValidator sets a custom validation function for the task and returns the modified task.
+// The validator will be called when Validate() is invoked.
+func (t *SimpleTask) WithValidator(validator func() error) *SimpleTask {
+	t.ValidateFunc = validator
+	return t
+}
+
+// WithCallback sets a function to be called when the task completes and returns the modified task.
+// The callback will receive the Result struct containing the task's output or error.
+func (t *SimpleTask) WithCallback(callback func(Result)) *SimpleTask {
+	t.Callback = callback
+	return t
+}
+
+// ID returns the unique identifier for this task.
 func (t *SimpleTask) ID() string {
 	return t.TaskID
 }
@@ -54,46 +113,26 @@ func (t *SimpleTask) Validate() error {
 	if t.TaskID == "" {
 		return errors.New("task ID cannot be empty")
 	}
-	if t.TaskFunc == nil {
+	if t.Function == nil {
 		return errors.New("task function cannot be nil")
 	}
-	if t.Validator != nil {
-		return t.Validator()
+	if t.ValidateFunc != nil {
+		return t.ValidateFunc()
 	}
 	return nil
 }
 
 // MaxRetries returns the maximum number of retries for the task
 func (t *SimpleTask) MaxRetries() int {
-	return t.TaskRetries
+	return t.MaxRetry
 }
 
-// NewSimpleTask creates a new simple task
-func NewSimpleTask(id, taskType string, fn func(ctx context.Context) (interface{}, error)) *SimpleTask {
-	return &SimpleTask{
-		TaskID:      id,
-		TaskType:    taskType,
-		TaskFunc:    fn,
-		TaskRetries: 3,
+// Execute runs the task function
+func (t *SimpleTask) Execute(ctx context.Context) (interface{}, error) {
+	if t.Function == nil {
+		return nil, errors.New("task function is nil")
 	}
-}
-
-// WithPriority sets the task priority
-func (t *SimpleTask) WithPriority(priority int) *SimpleTask {
-	t.TaskPriority = priority
-	return t
-}
-
-// WithRetries sets the maximum number of retries
-func (t *SimpleTask) WithRetries(retries int) *SimpleTask {
-	t.TaskRetries = retries
-	return t
-}
-
-// WithValidator sets a custom validation function
-func (t *SimpleTask) WithValidator(validator func() error) *SimpleTask {
-	t.Validator = validator
-	return t
+	return t.Function(ctx)
 }
 
 // FunctionTask is a task that executes a provided function
@@ -116,10 +155,10 @@ func NewFunctionTask(id string, fn func(ctx context.Context) (interface{}, error
 
 	return &FunctionTask{
 		SimpleTask: &SimpleTask{
-			TaskID:      id,
-			TaskType:    "function",
-			TaskFunc:    ctxFn,
-			TaskRetries: 3,
+			TaskID:   id,
+			TaskType: "function",
+			Function: ctxFn,
+			MaxRetry: 3,
 		},
 		startTime: time.Now(),
 	}

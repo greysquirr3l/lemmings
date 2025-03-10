@@ -1,3 +1,10 @@
+// Package manager provides a worker management system that automatically scales
+// workers based on resource usage and task demand. The manager component is the
+// central coordinator that distributes tasks to workers and collects results.
+//
+// The manager handles task submission, worker scaling, resource monitoring, and
+// provides statistics about task processing. It's designed to be the primary
+// interface point for applications using the lemmings library.
 package manager
 
 import (
@@ -6,126 +13,102 @@ import (
 	"fmt"
 	"log"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/greysquirr3l/lemmings/internal/factory"
 	"github.com/greysquirr3l/lemmings/pkg/worker"
 )
 
-// Manager coordinates workers and handles task distribution
+// Manager coordinates worker pools and task distribution.
+// It handles task submission, worker scaling, and result collection.
+// Manager is the central orchestration component in the lemmings library.
 type Manager struct {
 	sync.RWMutex
-	config           Config
-	resourceCtrl     *ResourceController
-	workerPool       *worker.Pool
-	workerFactory    factory.WorkerFactory[worker.Worker]
-	taskQueue        chan worker.Task
-	results          chan worker.Result
-	activeWorkers    map[int]worker.Worker
-	ctx              context.Context
-	cancel           context.CancelFunc
-	wg               sync.WaitGroup
-	started          bool
-	stats            ManagerStats
-	statsMu          sync.RWMutex
-	shutdownCh       chan struct{}
-	shutdownComplete chan struct{}
+	config          Config
+	resourceCtrl    *ResourceController // handles dynamic scaling
+	taskQueue       chan worker.Task    // tasks to be processed
+	resultQueue     chan worker.Result  // results from task processing
+	workerPool      *worker.Pool
+	workerFactory   factory.WorkerFactory[worker.Worker]
+	started         bool
+	stats           *managerStats
+	shutdownCh      chan struct{}
+	resourceMonitor chan struct{}
+	processorCtx    context.Context
+	processorCancel context.CancelFunc
+	waitCompleteCh  chan struct{} // signals when all tasks are complete
 }
 
-// ManagerStats tracks processing statistics
+// WorkerFactory defines an interface for creating workers
+type WorkerFactory interface {
+	// CreateWithID creates a worker with the specified ID
+	CreateWithID(id int) (worker.Worker, error)
+}
+
+// managerStats tracks statistics about task processing
+type managerStats struct {
+	sync.RWMutex
+	tasksSubmitted  int64
+	tasksCompleted  int64
+	tasksFailed     int64
+	tasksInProgress int32
+	totalTaskTime   int64 // nanoseconds
+	avgProcessTime  time.Duration
+	peakWorkerCount int
+}
+
+// ManagerStats provides statistics about manager performance
 type ManagerStats struct {
-	TasksSubmitted    int64
-	TasksCompleted    int64
-	TasksFailed       int64
-	TotalProcessTime  time.Duration
-	StartTime         time.Time
-	AvgProcessTime    time.Duration
-	PeakWorkerCount   int
-	CurrentTaskCount  int
-	TasksWaiting      int64
-	CurrentMemPercent float64
-	MemUtilization    []float64 // Records memory utilization over time
-	WorkerUtilization []int     // Records worker count over time
-	LastUpdated       time.Time
+	TasksSubmitted  int64
+	TasksCompleted  int64
+	TasksFailed     int64
+	TasksInProgress int32
+	AvgProcessTime  time.Duration
+	PeakWorkerCount int
 }
 
-// NewManager creates a new manager
+// NewManager creates a new manager with the specified worker factory and configuration.
+// Returns an initialized manager instance and any error encountered during creation.
+//
+// The workerFactory is used to create new workers as needed.
+// The config parameter specifies settings like initial worker count, scaling parameters, etc.
 func NewManager(workerFactory factory.WorkerFactory[worker.Worker], config Config) (*Manager, error) {
-	// Validate config
-	if config.MaxWorkers < 1 {
-		return nil, errors.New("max workers must be at least 1")
-	}
-	if config.InitialWorkers < 1 {
-		config.InitialWorkers = 1
-	}
-	if config.InitialWorkers > config.MaxWorkers {
-		config.InitialWorkers = config.MaxWorkers
-	}
-	if config.MinWorkers < 1 {
-		config.MinWorkers = 1
-	}
-	if config.MinWorkers > config.InitialWorkers {
-		config.MinWorkers = config.InitialWorkers
+	if err := config.Validate(); err != nil {
+		return nil, fmt.Errorf("invalid configuration: %w", err)
 	}
 
-	// Use default config for zero values
-	defaultCfg := DefaultConfig()
-	if config.TargetCPUPercent == 0 {
-		config.TargetCPUPercent = defaultCfg.TargetCPUPercent
-	}
-	if config.TargetMemoryPercent == 0 {
-		config.TargetMemoryPercent = defaultCfg.TargetMemoryPercent
-	}
+	taskQueue := make(chan worker.Task, config.MaxTasksInQueue)
+	resultQueue := make(chan worker.Result, config.MaxTasksInQueue)
 
-	// Create resource controller
-	resourceCtrl := NewResourceController(config)
-
-	// Create bounded task queue
-	maxQueue := config.MaxTasksInQueue
-	if maxQueue <= 0 {
-		maxQueue = defaultCfg.MaxTasksInQueue
-	}
-
+	// Create worker pool
 	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel() // Fix: Always call cancel to avoid context leak
 
-	m := &Manager{
-		config:           config,
-		resourceCtrl:     resourceCtrl,
-		workerFactory:    workerFactory,
-		taskQueue:        make(chan worker.Task, maxQueue),
-		results:          make(chan worker.Result, maxQueue),
-		activeWorkers:    make(map[int]worker.Worker),
-		ctx:              ctx,
-		cancel:           cancel,
-		shutdownCh:       make(chan struct{}),
-		shutdownComplete: make(chan struct{}),
-		stats: ManagerStats{
-			StartTime:         time.Now(),
-			LastUpdated:       time.Now(),
-			MemUtilization:    make([]float64, 0, 100),
-			WorkerUtilization: make([]int, 0, 100),
-		},
-	}
-
-	workerPool, err := worker.NewPool(
-		ctx,
-		config.InitialWorkers,
-		config.MaxWorkers,
-		m.taskQueue,
-		m.results,
-		workerFactory,
-	)
+	pool, err := worker.NewPool(ctx, config.InitialWorkers, config.MaxWorkers, taskQueue, resultQueue, workerFactory)
 	if err != nil {
-		cancel()
 		return nil, fmt.Errorf("failed to create worker pool: %w", err)
 	}
-	m.workerPool = workerPool
 
-	return m, nil
+	resourceCtrl := NewResourceController(config)
+
+	return &Manager{
+		config:          config,
+		resourceCtrl:    resourceCtrl,
+		taskQueue:       taskQueue,
+		resultQueue:     resultQueue,
+		workerPool:      pool,
+		workerFactory:   workerFactory,
+		shutdownCh:      make(chan struct{}),
+		resourceMonitor: make(chan struct{}),
+		stats:           &managerStats{},
+		waitCompleteCh:  make(chan struct{}),
+	}, nil
 }
 
-// Start begins processing tasks
-// Fix: Reduce cyclomatic complexity by extracting functions
+// Start initializes and starts the manager.
+// This launches worker goroutines and begins processing tasks.
+// Returns an error if the manager is already started or if initialization fails.
 func (m *Manager) Start() error {
 	m.Lock()
 	defer m.Unlock()
@@ -134,332 +117,208 @@ func (m *Manager) Start() error {
 		return errors.New("manager already started")
 	}
 
+	// Create a new context for task processing
+	m.processorCtx, m.processorCancel = context.WithCancel(context.Background())
+
 	// Start the worker pool
-	err := m.workerPool.Start()
-	if err != nil {
+	if err := m.workerPool.Start(); err != nil {
+		m.processorCancel()
 		return fmt.Errorf("failed to start worker pool: %w", err)
 	}
 
-	// Start monitoring resources
-	m.startResourceMonitoring()
+	// Start result processor
+	go m.processResults()
 
-	// Start resource adjustment
-	m.startResourceAdjustment()
-
-	// Start result handler
-	m.startResultHandler()
-
-	// Start graceful shutdown handler
-	m.startShutdownHandler()
+	// Start resource monitor
+	go m.monitorResources()
 
 	m.started = true
 	return nil
 }
 
-// startResourceMonitoring starts the resource monitoring goroutine
-func (m *Manager) startResourceMonitoring() {
-	m.wg.Add(1)
-	go func() {
-		defer m.wg.Done()
-		m.resourceCtrl.GetResourceMonitor().Start(m.ctx)
-	}()
-}
-
-// startResourceAdjustment starts the worker scaling goroutine
-func (m *Manager) startResourceAdjustment() {
-	m.wg.Add(1)
-	go func() {
-		defer m.wg.Done()
-		ticker := time.NewTicker(m.config.MonitorInterval)
-		defer ticker.Stop()
-
-		for {
-			select {
-			case <-m.ctx.Done():
-				return
-			case <-ticker.C:
-				m.resourceCtrl.AdjustBasedOnResourceUsage()
-				m.updateUtilizationStats()
-			}
-		}
-	}()
-}
-
-// updateUtilizationStats updates the manager stats with current utilization metrics
-func (m *Manager) updateUtilizationStats() {
-	memStats := m.resourceCtrl.GetResourceMonitor().GetStats().GetMemStats()
-
-	m.statsMu.Lock()
-	defer m.statsMu.Unlock()
-
-	currentCount := m.workerPool.GetActiveWorkerCount()
-	if currentCount > m.stats.PeakWorkerCount {
-		m.stats.PeakWorkerCount = currentCount
-	}
-
-	// Record utilization metrics (keep last 100 points)
-	m.stats.CurrentMemPercent = memStats.UsagePercent
-	if len(m.stats.MemUtilization) >= 100 {
-		m.stats.MemUtilization = m.stats.MemUtilization[1:100]
-	}
-	m.stats.MemUtilization = append(m.stats.MemUtilization, memStats.UsagePercent)
-
-	if len(m.stats.WorkerUtilization) >= 100 {
-		m.stats.WorkerUtilization = m.stats.WorkerUtilization[1:100]
-	}
-	m.stats.WorkerUtilization = append(m.stats.WorkerUtilization, currentCount)
-
-	m.stats.LastUpdated = time.Now()
-}
-
-// startResultHandler starts the result processing goroutine
-func (m *Manager) startResultHandler() {
-	m.wg.Add(1)
-	go func() {
-		defer m.wg.Done()
-		m.processResults()
-	}()
-}
-
-// startShutdownHandler starts the graceful shutdown handler
-func (m *Manager) startShutdownHandler() {
-	m.wg.Add(1)
-	go func() {
-		defer m.wg.Done()
-		defer close(m.shutdownComplete)
-		<-m.shutdownCh
-
-		if m.config.Verbose {
-			log.Println("Manager beginning graceful shutdown")
-		}
-
-		// Stop accepting new tasks, but process existing ones
-		close(m.taskQueue)
-
-		// Wait for tasks to complete or timeout
-		m.waitForTaskCompletion()
-	}()
-}
-
-// waitForTaskCompletion waits for tasks to complete during shutdown
-func (m *Manager) waitForTaskCompletion() {
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	ticker := time.NewTicker(100 * time.Millisecond)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-shutdownCtx.Done():
-			if m.config.Verbose {
-				log.Println("Manager shutdown timeout reached")
-			}
-			return
-		case <-ticker.C:
-			if len(m.taskQueue) == 0 && len(m.results) == 0 {
-				if m.config.Verbose {
-					log.Println("Manager completed graceful shutdown")
-				}
-				return
-			}
-		}
-	}
-}
-
-// Stop stops the manager and all workers
+// Stop gracefully stops the manager.
+// This waits for all current tasks to complete before stopping workers.
+// Tasks submitted during shutdown may be rejected depending on the shutdown stage.
 func (m *Manager) Stop() {
 	m.Lock()
-
 	if !m.started {
 		m.Unlock()
 		return
 	}
-
-	// Begin graceful shutdown
-	select {
-	case m.shutdownCh <- struct{}{}:
-		if m.config.Verbose {
-			log.Println("Manager initiating graceful shutdown")
-		}
-	default:
-		// Shutdown already initiated
-	}
-
 	m.Unlock()
 
-	// Wait for graceful shutdown to complete with a timeout
-	select {
-	case <-m.shutdownComplete:
-		// Graceful shutdown completed
-	case <-time.After(32 * time.Second):
-		// Forceful shutdown after timeout
-		if m.config.Verbose {
-			log.Println("Manager forcefully shutting down")
-		}
-	}
+	// Signal shutdown
+	close(m.shutdownCh)
 
-	// Now cancel everything and wait
-	m.cancel()
-	m.wg.Wait()
+	// Wait for processors to finish
+	m.processorCancel()
+
+	// Stop the worker pool
+	m.workerPool.Stop()
 
 	m.Lock()
 	m.started = false
 	m.Unlock()
+
+	log.Println("Manager stopped")
 }
 
-// Submit submits a task for processing
+// Submit adds a task to the queue for processing.
+// Returns an error if the submission fails, e.g., due to task validation failure
+// or if the queue is full.
+//
+// Tasks will be processed according to their priority, with higher priorities
+// processed first. For tasks with equal priority, they'll be processed in FIFO order.
 func (m *Manager) Submit(task worker.Task) error {
-	if !m.started {
-		return worker.ErrManagerNotStarted
-	}
-
-	select {
-	case m.taskQueue <- task:
-		m.statsMu.Lock()
-		m.stats.TasksSubmitted++
-		m.stats.CurrentTaskCount++
-		m.stats.TasksWaiting++
-		m.statsMu.Unlock()
-		return nil
-	case <-m.ctx.Done():
-		return worker.ErrManagerShuttingDown
-	default:
-		return worker.ErrTaskQueueFull
-	}
+	return m.SubmitWithTimeout(task, 0)
 }
 
-// SubmitWithTimeout submits a task with a timeout
+// SubmitWithTimeout adds a task to the queue with a timeout.
+// If the task cannot be added to the queue within the specified duration,
+// it returns a timeout error.
+//
+// The timeout refers to the queue submission time, not the task execution time.
 func (m *Manager) SubmitWithTimeout(task worker.Task, timeout time.Duration) error {
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
-	defer cancel()
-
+	m.RLock()
 	if !m.started {
-		return worker.ErrManagerNotStarted
+		m.RUnlock()
+		return errors.New("manager not started")
+	}
+	m.RUnlock()
+
+	// Validate the task
+	if err := task.Validate(); err != nil {
+		return fmt.Errorf("invalid task: %w", err)
 	}
 
-	select {
-	case m.taskQueue <- task:
-		m.statsMu.Lock()
-		m.stats.TasksSubmitted++
-		m.stats.CurrentTaskCount++
-		m.stats.TasksWaiting++
-		m.statsMu.Unlock()
-		return nil
-	case <-m.ctx.Done():
-		return worker.ErrManagerShuttingDown
-	case <-ctx.Done():
-		return errors.New("submission timeout")
-	}
-}
-
-// SubmitBatch submits multiple tasks
-func (m *Manager) SubmitBatch(tasks []worker.Task) (int, error) {
-	if !m.started {
-		return 0, worker.ErrManagerNotStarted
-	}
-
-	submitted := 0
-	for _, task := range tasks {
+	// Add to task queue with optional timeout
+	if timeout > 0 {
 		select {
 		case m.taskQueue <- task:
-			submitted++
-		case <-m.ctx.Done():
-			m.updateSubmittedStats(submitted)
-			return submitted, worker.ErrManagerShuttingDown
-		default:
-			m.updateSubmittedStats(submitted)
-			return submitted, worker.ErrTaskQueueFull
+			// Task added successfully
+		case <-time.After(timeout):
+			return errors.New("timeout submitting task to queue")
+		case <-m.shutdownCh:
+			return errors.New("manager is shutting down")
+		}
+	} else {
+		select {
+		case m.taskQueue <- task:
+			// Task added successfully
+		case <-m.shutdownCh:
+			return errors.New("manager is shutting down")
 		}
 	}
 
-	m.updateSubmittedStats(submitted)
-	return submitted, nil
+	m.stats.Lock()
+	m.stats.tasksSubmitted++
+	atomic.AddInt32(&m.stats.tasksInProgress, 1)
+	m.stats.Unlock()
+
+	if m.config.Verbose {
+		log.Printf("Task %s submitted", task.ID())
+	}
+
+	return nil
 }
 
-// updateSubmittedStats updates statistics after task submission
-func (m *Manager) updateSubmittedStats(count int) {
-	m.statsMu.Lock()
-	defer m.statsMu.Unlock()
-
-	m.stats.TasksSubmitted += int64(count)
-	m.stats.CurrentTaskCount += count
-	m.stats.TasksWaiting += int64(count)
-}
-
-// processResults processes task results
+// processResults handles processing of task results from workers
 func (m *Manager) processResults() {
 	for {
 		select {
-		case <-m.ctx.Done():
+		case <-m.shutdownCh:
 			return
-		case result, ok := <-m.results:
-			if !ok {
-				return // Channel closed
-			}
-
-			// Handle callback if task has one
-			if fnTask, ok := result.Task.(*worker.FunctionTask); ok {
-				if callback := fnTask.GetCallback(); callback != nil {
-					go callback(result)
-				}
-			}
-
-			m.statsMu.Lock()
-			m.stats.CurrentTaskCount--
-			m.stats.TasksWaiting--
-			if result.Err != nil {
-				m.stats.TasksFailed++
-			} else {
-				m.stats.TasksCompleted++
-				m.stats.TotalProcessTime += result.Duration
-				if m.stats.TasksCompleted > 0 {
-					m.stats.AvgProcessTime = time.Duration(int64(m.stats.TotalProcessTime) / m.stats.TasksCompleted)
-				}
-			}
-			m.statsMu.Unlock()
+		case result := <-m.resultQueue:
+			m.handleResult(result)
 		}
 	}
 }
 
-// GetStats returns the current processing statistics
-func (m *Manager) GetStats() ManagerStats {
-	m.statsMu.RLock()
-	defer m.statsMu.RUnlock()
-	return m.stats
+// handleResult processes a single task result
+func (m *Manager) handleResult(result worker.Result) {
+	m.stats.Lock()
+	defer m.stats.Unlock()
+
+	if result.Err != nil {
+		// Task failed
+		m.stats.tasksFailed++
+	} else {
+		// Task succeeded
+		m.stats.tasksCompleted++
+	}
+
+	// Update stats
+	atomic.AddInt32(&m.stats.tasksInProgress, -1)
+	m.stats.totalTaskTime += result.Duration.Nanoseconds()
+
+	if m.stats.tasksCompleted > 0 {
+		m.stats.avgProcessTime = time.Duration(m.stats.totalTaskTime / m.stats.tasksCompleted)
+	}
+
+	// Check if a task callback exists and invoke it
+	if result.Task != nil {
+		if task, ok := result.Task.(*worker.SimpleTask); ok && task.Callback != nil {
+			go task.Callback(result)
+		}
+	}
 }
 
-// GetWorkerCount returns the current number of workers
-func (m *Manager) GetWorkerCount() int {
-	return m.workerPool.GetActiveWorkerCount()
+// monitorResources monitors system resources and adjusts worker count accordingly
+func (m *Manager) monitorResources() {
+	ticker := time.NewTicker(m.config.MonitorInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-m.shutdownCh:
+			return
+		case <-ticker.C:
+			m.resourceCtrl.AdjustBasedOnResourceUsage()
+		}
+	}
 }
 
-// GetTaskQueueLength returns the current number of tasks in the queue
-func (m *Manager) GetTaskQueueLength() int {
-	return len(m.taskQueue)
-}
-
-// GetResultQueueLength returns the current number of results in the queue
-func (m *Manager) GetResultQueueLength() int {
-	return len(m.results)
-}
-
-// EnableDynamicScaling enables automatic worker scaling
+// EnableDynamicScaling turns on automatic worker scaling
 func (m *Manager) EnableDynamicScaling() {
 	m.resourceCtrl.EnableScaling()
 }
 
-// DisableDynamicScaling disables automatic worker scaling
+// DisableDynamicScaling turns off automatic worker scaling
 func (m *Manager) DisableDynamicScaling() {
 	m.resourceCtrl.DisableScaling()
 }
 
-// ForceScaleWorkers manually scales workers to the specified count
-func (m *Manager) ForceScaleWorkers(count int) {
-	m.resourceCtrl.AdjustWorkerCount(count, "manual scaling")
+// GetStats returns statistics about manager performance
+func (m *Manager) GetStats() ManagerStats {
+	m.stats.RLock()
+	defer m.stats.RUnlock()
+
+	return ManagerStats{
+		TasksSubmitted:  m.stats.tasksSubmitted,
+		TasksCompleted:  m.stats.tasksCompleted,
+		TasksFailed:     m.stats.tasksFailed,
+		TasksInProgress: m.stats.tasksInProgress,
+		AvgProcessTime:  m.stats.avgProcessTime,
+		PeakWorkerCount: m.stats.peakWorkerCount,
+	}
 }
 
-// WaitForCompletion blocks until all tasks are processed or context is canceled
+// GetWorkerCount returns the current number of active workers
+func (m *Manager) GetWorkerCount() int {
+	return m.workerPool.Size()
+}
+
+// GetTaskQueueLength returns the number of tasks waiting to be processed
+func (m *Manager) GetTaskQueueLength() int {
+	return len(m.taskQueue)
+}
+
+// GetResultQueueLength returns the number of results waiting to be processed
+func (m *Manager) GetResultQueueLength() int {
+	return len(m.resultQueue)
+}
+
+// WaitForCompletion blocks until all submitted tasks are completed or context is done
 func (m *Manager) WaitForCompletion(ctx context.Context) error {
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
@@ -469,12 +328,38 @@ func (m *Manager) WaitForCompletion(ctx context.Context) error {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-ticker.C:
-			stats := m.GetStats()
-			if stats.TasksSubmitted == stats.TasksCompleted+stats.TasksFailed &&
-				m.GetTaskQueueLength() == 0 &&
-				stats.TasksSubmitted > 0 {
+			m.stats.RLock()
+			inProgress := m.stats.tasksInProgress
+			m.stats.RUnlock()
+
+			queueLen := m.GetTaskQueueLength()
+
+			// No tasks in queue and none in progress means we're done
+			if inProgress == 0 && queueLen == 0 {
 				return nil
 			}
 		}
 	}
+}
+
+// ForceScaleWorkers manually adjusts the worker count
+func (m *Manager) ForceScaleWorkers(count int) {
+	m.resourceCtrl.AdjustWorkerCount(count, "manual scaling")
+}
+
+// SubmitBatch submits a batch of tasks
+func (m *Manager) SubmitBatch(tasks []worker.Task) (int, error) {
+	if !m.started {
+		return 0, errors.New("manager not started")
+	}
+
+	submitted := 0
+	for _, task := range tasks {
+		if err := m.Submit(task); err != nil {
+			return submitted, err
+		}
+		submitted++
+	}
+
+	return submitted, nil
 }

@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"math/rand"
 	"os"
 	"os/signal"
 	"sync/atomic"
@@ -12,6 +11,7 @@ import (
 	"time"
 
 	"github.com/greysquirr3l/lemmings/internal/factory"
+	"github.com/greysquirr3l/lemmings/internal/utils"
 	"github.com/greysquirr3l/lemmings/pkg/manager"
 	"github.com/greysquirr3l/lemmings/pkg/worker"
 )
@@ -169,7 +169,7 @@ func (tp *TaskProcessor) ProcessMixed(count int) error {
 		taskID := fmt.Sprintf("mixed-%d", i)
 
 		// Randomly choose task type
-		taskType := rand.Intn(3)
+		taskType, _ := utils.SecureIntn(3)
 
 		var task worker.Task
 
@@ -181,7 +181,8 @@ func (tp *TaskProcessor) ProcessMixed(count int) error {
 
 				// CPU-intensive work
 				result := 0
-				complexity := rand.Intn(10) + 1
+				complexity, _ := utils.SecureIntn(10)
+				complexity++ // Add 1 to ensure non-zero
 				for j := 0; j < complexity*50000; j++ {
 					result += j % 10
 				}
@@ -201,7 +202,8 @@ func (tp *TaskProcessor) ProcessMixed(count int) error {
 				start := time.Now()
 
 				// I/O wait
-				sleepTime := time.Duration(rand.Intn(500)+10) * time.Millisecond
+				randVal, _ := utils.SecureIntn(500)
+				sleepTime := time.Duration(randVal+10) * time.Millisecond
 				time.Sleep(sleepTime)
 
 				duration := time.Since(start)
@@ -217,12 +219,14 @@ func (tp *TaskProcessor) ProcessMixed(count int) error {
 			// Error-prone task
 			task = worker.NewFunctionTask(taskID, func(ctx context.Context) (interface{}, error) {
 				// 30% chance to fail
-				if rand.Intn(10) < 3 {
+				randVal, _ := utils.SecureIntn(10)
+				if randVal < 3 {
 					return nil, fmt.Errorf("random task failure")
 				}
 
 				start := time.Now()
-				time.Sleep(time.Duration(rand.Intn(100)+10) * time.Millisecond)
+				randVal, _ = utils.SecureIntn(100)
+				time.Sleep(time.Duration(randVal+10) * time.Millisecond)
 				duration := time.Since(start)
 
 				return TaskResult{

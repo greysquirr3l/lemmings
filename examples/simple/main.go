@@ -4,10 +4,10 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"math/rand"
 	"time"
 
 	"github.com/greysquirr3l/lemmings/internal/factory"
+	"github.com/greysquirr3l/lemmings/internal/utils"
 	"github.com/greysquirr3l/lemmings/pkg/manager"
 	"github.com/greysquirr3l/lemmings/pkg/worker"
 )
@@ -45,11 +45,13 @@ func main() {
 		// Create a simple task
 		task := worker.NewFunctionTask(taskID, func(ctx context.Context) (interface{}, error) {
 			// Simulate work
-			duration := time.Duration(rand.Intn(500)+100) * time.Millisecond
+			randVal, _ := utils.SecureIntn(500)
+			duration := time.Duration(randVal+100) * time.Millisecond
 			time.Sleep(duration)
 
 			// 10% chance of failure
-			if rand.Intn(10) == 0 {
+			randVal, _ = utils.SecureIntn(10)
+			if randVal == 0 {
 				return nil, fmt.Errorf("random task failure")
 			}
 

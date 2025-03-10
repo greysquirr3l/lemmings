@@ -1,3 +1,10 @@
+// Package worker provides interfaces and implementations for workers and tasks
+// in the lemmings library. Workers are responsible for executing tasks, while
+// tasks represent units of work with specific execution logic.
+//
+// The package defines the core Worker interface and implementations like SimpleWorker
+// that can be extended with custom behavior. It also provides the core Task interface
+// and implementations like SimpleTask and FunctionTask.
 package worker
 
 import (

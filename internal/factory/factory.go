@@ -1,5 +1,5 @@
-// internal/factory/factory.go
-
+// Package factory implements generic factory patterns for creating objects.
+// It provides type-safe factories for creating workers and other components.
 package factory
 
 import (
@@ -8,23 +8,30 @@ import (
 	"sync"
 )
 
-// Factory is a generic interface for creating objects
+// Factory is a generic interface for creating objects of type T.
 type Factory[T any] interface {
+	// Create creates and returns a new instance of type T.
+	// Returns the created object or an error if creation fails.
 	Create() (T, error)
 }
 
-// WorkerFactory is a generic factory for creating workers
-type WorkerFactory[T any] interface {
-	Factory[T]
-	CreateWithID(id int) (T, error)
-}
-
-// FactoryFunc is a function type that implements Factory
+// FactoryFunc is a function type that implements the Factory interface.
+// It allows simple functions to be used as factories.
 type FactoryFunc[T any] func() (T, error)
 
-// Create implements the Factory interface
+// Create calls the factory function to create a new instance.
+// Implements the Factory interface.
 func (f FactoryFunc[T]) Create() (T, error) {
 	return f()
+}
+
+// WorkerFactory is a factory that creates workers with sequential IDs.
+type WorkerFactory[T any] interface {
+	Factory[T]
+
+	// CreateWithID creates a worker with the specified ID.
+	// Returns the created worker or an error if creation fails.
+	CreateWithID(id int) (T, error)
 }
 
 // WorkerFactoryFunc is a function type that implements WorkerFactory

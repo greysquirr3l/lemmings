@@ -1,3 +1,4 @@
+// Package manager provides worker management functionality.
 package manager
 
 import (
@@ -8,7 +9,8 @@ import (
 	"github.com/greysquirr3l/lemmings/internal/utils"
 )
 
-// ResourceController handles dynamic scaling of workers based on resource usage
+// ResourceController handles dynamic scaling of workers based on resource usage.
+// It monitors system resources like memory and adjusts worker count accordingly.
 type ResourceController struct {
 	sync.Mutex
 	monitor         *utils.ResourceMonitor
@@ -28,16 +30,18 @@ type ResourceController struct {
 	scalingEnabled      bool
 }
 
-// ScaleEvent represents a scaling action
+// ScaleEvent represents a scaling action taken by the ResourceController.
+// It records details about when and why scaling occurred.
 type ScaleEvent struct {
-	Time        time.Time
-	FromWorkers int
-	ToWorkers   int
-	Reason      string
-	MemUsage    float64
+	Time        time.Time // When the scaling occurred
+	FromWorkers int       // Previous worker count
+	ToWorkers   int       // New worker count
+	Reason      string    // Reason for scaling
+	MemUsage    float64   // Memory usage percentage at time of scaling
 }
 
-// NewResourceController creates a new ResourceController
+// NewResourceController creates a new ResourceController with the specified configuration.
+// Returns an initialized controller that can adjust worker count based on resource usage.
 func NewResourceController(config Config) *ResourceController {
 	monitorOpts := []utils.ResourceMonitorOption{
 		utils.WithMemoryWatermarks(config.LowMemoryMark, config.HighMemoryMark),
@@ -61,7 +65,11 @@ func NewResourceController(config Config) *ResourceController {
 	}
 }
 
-// AdjustWorkerCount changes the number of active workers
+// AdjustWorkerCount changes the number of active workers.
+// This method ensures the new count is between minWorkers and maxWorkers,
+// sends appropriate signals to the worker pool, and records the scaling event.
+//
+// The reason parameter provides a description of why scaling is occurring.
 func (rc *ResourceController) AdjustWorkerCount(newCount int, reason string) {
 	rc.Lock()
 	defer rc.Unlock()
@@ -85,9 +93,24 @@ func (rc *ResourceController) AdjustWorkerCount(newCount int, reason string) {
 				// Signal sent successfully
 			default:
 				log.Printf("Warning: Worker control channel full, scale-up incomplete")
-				// Adjust our count to reflect reality
+				// Adjust our count to reflect reality - only scale up by i workers
 				newCount = rc.activeWorkers + i
-				return // Fixed: Return instead of break to exit function
+
+				// Record the scaling event before returning
+				memUsage := rc.monitor.GetStats().GetMemUsagePercent()
+				event := ScaleEvent{
+					Time:        time.Now(),
+					FromWorkers: rc.activeWorkers,
+					ToWorkers:   newCount,
+					Reason:      reason + " (partial)",
+					MemUsage:    memUsage,
+				}
+				rc.scaleHistory = append(rc.scaleHistory, event)
+				rc.activeWorkers = newCount
+				rc.lastScaleAction = time.Now()
+				log.Printf("Adjusted worker count from %d to %d (%s, memory: %.1f%%)",
+					event.FromWorkers, event.ToWorkers, reason, memUsage)
+				return
 			}
 		}
 	} else {
@@ -98,9 +121,24 @@ func (rc *ResourceController) AdjustWorkerCount(newCount int, reason string) {
 				// Signal sent successfully
 			default:
 				log.Printf("Warning: Worker control channel full, scale-down incomplete")
-				// Adjust our count to reflect reality
+				// Adjust our count to reflect reality - only scale down by i workers
 				newCount = rc.activeWorkers - i
-				return // Fixed: Return instead of break to exit function
+
+				// Record the scaling event before returning
+				memUsage := rc.monitor.GetStats().GetMemUsagePercent()
+				event := ScaleEvent{
+					Time:        time.Now(),
+					FromWorkers: rc.activeWorkers,
+					ToWorkers:   newCount,
+					Reason:      reason + " (partial)",
+					MemUsage:    memUsage,
+				}
+				rc.scaleHistory = append(rc.scaleHistory, event)
+				rc.activeWorkers = newCount
+				rc.lastScaleAction = time.Now()
+				log.Printf("Adjusted worker count from %d to %d (%s, memory: %.1f%%)",
+					event.FromWorkers, event.ToWorkers, reason, memUsage)
+				return
 			}
 		}
 		rc.monitor.RecordScaleDown()

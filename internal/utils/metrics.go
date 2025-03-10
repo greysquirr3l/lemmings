@@ -1,3 +1,4 @@
+// Package utils provides internal utility functions and types for resource monitoring.
 package utils
 
 import (
@@ -7,32 +8,34 @@ import (
 	"time"
 )
 
-// MemStats represents memory statistics
+// MemStats represents memory statistics collected from the Go runtime.
+// It includes detailed memory usage metrics and garbage collection information.
 type MemStats struct {
-	UsagePercent     float64
-	AllocatedBytes   uint64
-	SystemBytes      uint64
-	GCPauseTimeNs    uint64
-	LastGCTime       time.Time
-	NumGC            uint32
-	LastCollectionMs float64
-	HeapObjects      uint64
-	HeapInUseBytes   uint64
-	StackInUseBytes  uint64
-	MSpanInUseBytes  uint64
-	MCacheInUseBytes uint64
-	BuckHashSysBytes uint64
-	GCSysBytes       uint64
-	OtherSysBytes    uint64
-	NextGCSizeBytes  uint64
-	LastSampleTime   time.Time
-	TotalAllocBytes  uint64
-	TotalAllocsCount uint64
-	TotalFreesCount  uint64
-	PauseTotalNs     uint64
+	UsagePercent     float64   // Percentage of system memory in use (0-100)
+	AllocatedBytes   uint64    // Bytes allocated and still in use
+	SystemBytes      uint64    // Total bytes obtained from system
+	GCPauseTimeNs    uint64    // Nanoseconds spent in GC stop-the-world pauses
+	LastGCTime       time.Time // Time of the last garbage collection
+	NumGC            uint32    // Number of completed GC cycles
+	LastCollectionMs float64   // Milliseconds spent in last collection
+	HeapObjects      uint64    // Number of allocated heap objects
+	HeapInUseBytes   uint64    // Bytes in use by the heap
+	StackInUseBytes  uint64    // Bytes in use by the stack
+	MSpanInUseBytes  uint64    // Bytes of allocated mspan structures
+	MCacheInUseBytes uint64    // Bytes of allocated mcache structures
+	BuckHashSysBytes uint64    // Bytes of profiling bucket hash table
+	GCSysBytes       uint64    // Bytes of garbage collection system metadata
+	OtherSysBytes    uint64    // Bytes of other system allocations
+	NextGCSizeBytes  uint64    // Size target for next GC cycle
+	LastSampleTime   time.Time // Time when these stats were sampled
+	TotalAllocBytes  uint64    // Total bytes allocated (including freed)
+	TotalAllocsCount uint64    // Total count of allocations
+	TotalFreesCount  uint64    // Total count of frees
+	PauseTotalNs     uint64    // Total nanoseconds spent in GC stop-the-world pauses
 }
 
-// SystemStats tracks system resource usage
+// SystemStats tracks system resource usage including memory and goroutine counts.
+// It maintains historical data for trend analysis.
 type SystemStats struct {
 	mu           sync.RWMutex
 	CPUUsage     float64
@@ -46,7 +49,8 @@ type SystemStats struct {
 	MaxHistoryEntries int
 }
 
-// New creates a new SystemStats instance
+// NewSystemStats creates a new SystemStats instance with initialized fields.
+// Returns a pointer to the created SystemStats.
 func NewSystemStats() *SystemStats {
 	return &SystemStats{
 		LastUpdate:        time.Now(),
