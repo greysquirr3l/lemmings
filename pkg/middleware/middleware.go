@@ -158,3 +158,15 @@ func (t *wrappedTask) Execute(ctx context.Context) (interface{}, error) {
 
 	return handler(ctx, t.Task)
 }
+
+// Middleware is a function that wraps a Task's execution and can modify
+// its behavior before and/or after execution
+// The function might have this type signature:
+type MiddlewareFunc func(worker.Task) worker.Task
+
+// Or it might be an interface:
+/*
+type Middleware interface {
+    WrapTask(task worker.Task) worker.Task
+}
+*/

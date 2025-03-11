@@ -9,10 +9,6 @@ import (
 	"github.com/greysquirr3l/lemmings/pkg/worker"
 )
 
-const (
-	testTaskResult = "done"
-)
-
 func TestManagerGetters(t *testing.T) {
 	t.Run("GetTaskQueueLength returns queue length", func(t *testing.T) {
 		mockFactory := testutils.NewMockFactory(func(id int) (worker.Worker, error) {

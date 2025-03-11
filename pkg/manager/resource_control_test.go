@@ -7,16 +7,7 @@ import (
 	"github.com/greysquirr3l/lemmings/internal/utils"
 )
 
-// Create a simpler test monitor for our tests
-type testMonitor struct {
-	*utils.ResourceMonitor
-	shouldScaleUp bool
-}
-
-// Override ShouldScaleUp to return a fixed value for testing
-func (tm *testMonitor) ShouldScaleUp() bool {
-	return tm.shouldScaleUp
-}
+// Removed unused testMonitor type and its ShouldScaleUp method
 
 func TestNewResourceController(t *testing.T) {
 	t.Run("NewResourceController initializes with config", func(t *testing.T) {
