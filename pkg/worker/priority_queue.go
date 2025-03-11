@@ -108,8 +108,12 @@ func (h *taskHeap) Less(i, j int) bool {
 	return (*h)[i].timestamp < (*h)[j].timestamp
 }
 
+// Swap implements heap.Interface
 func (h *taskHeap) Swap(i, j int) {
+	// First swap the items
 	(*h)[i], (*h)[j] = (*h)[j], (*h)[i]
+
+	// Then update their indices in the heap
 	(*h)[i].index = i
 	(*h)[j].index = j
 }

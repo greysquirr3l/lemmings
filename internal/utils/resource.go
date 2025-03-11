@@ -36,6 +36,8 @@ type ResourceMonitor struct {
 	minCleanupInterval time.Duration
 	scaleDownDelay     time.Duration
 	lastScaleDown      time.Time
+	lastScaleUp        time.Time
+	scaleUpCooldown    time.Duration
 }
 
 // NewResourceMonitor creates a new ResourceMonitor
@@ -50,6 +52,8 @@ func NewResourceMonitor(opts ...ResourceMonitorOption) *ResourceMonitor {
 		minCleanupInterval: 5 * time.Minute,
 		scaleDownDelay:     30 * time.Second,
 		lastScaleDown:      time.Now(),
+		lastScaleUp:        time.Now(),
+		scaleUpCooldown:    30 * time.Second,
 	}
 
 	// Apply options
@@ -143,8 +147,30 @@ func (rm *ResourceMonitor) ShouldScaleUp() bool {
 	rm.RLock()
 	defer rm.RUnlock()
 
-	return rm.stats.GetMemUsagePercent() < rm.memoryLowmark &&
-		time.Since(rm.lastScaleDown) > rm.scaleDownDelay
+	// First check memory condition - memory must be below low watermark
+	memUsage := rm.stats.GetMemUsagePercent()
+	if memUsage >= rm.memoryLowmark {
+		return false
+	}
+
+	// Check if we're in a cooldown period after recent scaling events
+	if time.Since(rm.lastScaleDown) < rm.scaleDownDelay {
+		return false
+	}
+
+	if time.Since(rm.lastScaleUp) < rm.scaleUpCooldown {
+		return false
+	}
+
+	// All conditions passed, scaling up is possible
+	return true
+}
+
+// RecordScaleUp records that a scale-up operation occurred
+func (rm *ResourceMonitor) RecordScaleUp() {
+	rm.Lock()
+	defer rm.Unlock()
+	rm.lastScaleUp = time.Now()
 }
 
 // RecordScaleDown records that a scale down has occurred

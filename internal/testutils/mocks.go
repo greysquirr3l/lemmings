@@ -1,3 +1,5 @@
+// Package testutils provides testing utilities for the lemmings library.
+// This file contains mock implementations used in tests.
 package testutils
 
 import (
@@ -8,7 +10,7 @@ import (
 	"github.com/greysquirr3l/lemmings/pkg/worker"
 )
 
-// MockTask is a mock implementation of worker.Task for testing
+// MockTask is a mock implementation of worker.Task for testing.
 type MockTask struct {
 	id          string
 	taskType    string
@@ -20,7 +22,8 @@ type MockTask struct {
 	mu          sync.Mutex
 }
 
-// NewMockTask creates a new mock task with the given parameters
+// NewMockTask creates a new mock task with the given parameters.
+// It returns a pointer to the created MockTask instance.
 func NewMockTask(id string, execFunc func(ctx context.Context) (interface{}, error)) *MockTask {
 	return &MockTask{
 		id:         id,
@@ -30,32 +33,32 @@ func NewMockTask(id string, execFunc func(ctx context.Context) (interface{}, err
 	}
 }
 
-// ID returns the task's identifier
+// ID returns the task's identifier.
 func (t *MockTask) ID() string {
 	return t.id
 }
 
-// Type returns the task type
+// Type returns the task type.
 func (t *MockTask) Type() string {
 	return t.taskType
 }
 
-// Priority returns the task priority
+// Priority returns the task priority.
 func (t *MockTask) Priority() int {
 	return t.priority
 }
 
-// MaxRetries returns the maximum number of retries for the task
+// MaxRetries returns the maximum number of retries for the task.
 func (t *MockTask) MaxRetries() int {
 	return t.maxRetries
 }
 
-// Validate checks if the task is valid
+// Validate checks if the task is valid.
 func (t *MockTask) Validate() error {
 	return t.validateErr
 }
 
-// Execute runs the task function
+// Execute runs the task function.
 func (t *MockTask) Execute(ctx context.Context) (interface{}, error) {
 	t.mu.Lock()
 	t.execCount++
@@ -68,32 +71,36 @@ func (t *MockTask) Execute(ctx context.Context) (interface{}, error) {
 	return execCount, nil
 }
 
-// WithPriority sets the task priority
+// WithPriority sets the task priority.
+// It returns the modified task for method chaining.
 func (t *MockTask) WithPriority(priority int) *MockTask {
 	t.priority = priority
 	return t
 }
 
-// WithRetries sets the maximum number of retries
+// WithRetries sets the maximum number of retries.
+// It returns the modified task for method chaining.
 func (t *MockTask) WithRetries(retries int) *MockTask {
 	t.maxRetries = retries
 	return t
 }
 
-// WithValidateError sets a validation error
+// WithValidateError sets a validation error.
+// It returns the modified task for method chaining.
 func (t *MockTask) WithValidateError(err error) *MockTask {
 	t.validateErr = err
 	return t
 }
 
-// GetExecutionCount returns the number of times Execute has been called
+// GetExecutionCount returns the number of times Execute has been called.
 func (t *MockTask) GetExecutionCount() int {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	return t.execCount
 }
 
-// MockWorker is a mock implementation of worker.Worker for testing
+// MockWorker is a mock implementation of worker.Worker for testing.
+// It simulates worker behavior for testing purposes.
 type MockWorker struct {
 	id         int
 	available  bool
@@ -105,7 +112,8 @@ type MockWorker struct {
 	resultChan chan<- worker.Result
 }
 
-// NewMockWorker creates a new mock worker
+// NewMockWorker creates a new mock worker.
+// It returns a pointer to the created MockWorker.
 func NewMockWorker(id int, resultChan chan worker.Result) *MockWorker {
 	return &MockWorker{
 		id:         id,
@@ -210,7 +218,8 @@ func (w *MockWorker) IsStopped() bool {
 	return w.stopped
 }
 
-// MockFactory is a mock implementation of factory.WorkerFactory
+// MockFactory is a mock implementation of factory.WorkerFactory.
+// It can be configured to return specific workers or errors for testing.
 type MockFactory struct {
 	createFn        func(id int) (worker.Worker, error)
 	createdWorkers  []worker.Worker
@@ -218,7 +227,8 @@ type MockFactory struct {
 	creationCounter int
 }
 
-// NewMockFactory creates a new mock factory with the given worker creation function
+// NewMockFactory creates a new mock factory with the given worker creation function.
+// It returns a pointer to a MockFactory that implements the factory.WorkerFactory interface.
 func NewMockFactory(fn func(id int) (worker.Worker, error)) *MockFactory {
 	return &MockFactory{
 		createFn:       fn,

@@ -1,3 +1,5 @@
+// Package testutils provides testing utilities for the lemmings library.
+// It includes utility functions and specialized task implementations for testing.
 package testutils
 
 import (

@@ -244,6 +244,22 @@ git-pull: git-check ## Pull from Git repository
 	@git pull || (echo "${COLOR_YELLOW}Git pull failed. Trying to reinitialize authentication...${COLOR_RESET}" && \
 	make git-reinit && git pull)
 
+# Security scanning with Snyk (CLI-only mode)
+.PHONY: security-scan
+security-scan:
+	@echo "Running Snyk security scan (CLI-only mode)..."
+	snyk test --cli-only=true --severity-threshold=medium
+	@echo "Running Snyk code scan..."
+	snyk code test --severity-threshold=medium
+
+# Comprehensive security scan including dependencies
+.PHONY: security-scan-full
+security-scan-full:
+	@echo "Running comprehensive Snyk security scan..."
+	snyk test --all-projects
+	snyk code test
+	snyk container test --file=Dockerfile || true
+
 .PHONY: help
 help: ## Display this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "${COLOR_GREEN}%-20s${COLOR_RESET} %s\n", $$1, $$2}'

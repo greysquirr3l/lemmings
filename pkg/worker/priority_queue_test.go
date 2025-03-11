@@ -192,61 +192,45 @@ func TestTaskHeap(t *testing.T) {
 	t.Run("taskHeap implements heap.Interface correctly", func(t *testing.T) {
 		h := &taskHeap{}
 
+		// Create task items with distinct values for testing
+		task1 := NewSimpleTask("task1", "test", nil)
+		task2 := NewSimpleTask("task2", "test", nil)
+
 		// Create task items
 		item1 := &taskItem{
-			task:      NewSimpleTask("task1", "test", nil),
+			task:      task1,
 			priority:  1,
 			timestamp: time.Now().UnixNano(),
 			index:     0,
 		}
 
 		item2 := &taskItem{
-			task:      NewSimpleTask("task2", "test", nil),
+			task:      task2,
 			priority:  2,
 			timestamp: time.Now().UnixNano() + 1,
-			index:     0,
+			index:     1,
 		}
 
-		// Test Push
-		h.Push(item1)
-		if len(*h) != 1 {
-			t.Errorf("Expected length 1 after Push, got %d", len(*h))
-		}
-
-		h.Push(item2)
-		if len(*h) != 2 {
-			t.Errorf("Expected length 2 after Push, got %d", len(*h))
-		}
-
-		// Test Less (higher priority should be "less" so it comes first)
-		if !h.Less(1, 0) {
-			t.Error("Expected item2 (higher priority) to be Less than item1")
-		}
-
-		// Test Pop
-		popped := h.Pop()
-		if popped == nil {
-			t.Error("Unexpected nil from Pop()")
-		}
-
-		item, ok := popped.(*taskItem)
-		if !ok {
-			t.Error("Expected *taskItem from Pop(), got different type")
-		} else if item.task.ID() != task2ID {
-			t.Errorf("Expected task2 from Pop(), got %s", item.task.ID())
-		}
-
-		// Test Swap and index updates
+		// Add items directly to the heap for testing Swap
 		*h = append(*h, item1, item2)
+
+		// Test Swap
+		oldItem0 := (*h)[0]
+		oldItem1 := (*h)[1]
+
 		h.Swap(0, 1)
 
-		if (*h)[0].task.ID() != "task2" || (*h)[1].task.ID() != "task1" {
+		// Verify items were swapped correctly
+		if (*h)[0] != oldItem1 || (*h)[1] != oldItem0 {
 			t.Error("Swap did not correctly swap elements")
 		}
 
+		// Verify indices were updated correctly
 		if (*h)[0].index != 0 || (*h)[1].index != 1 {
 			t.Error("Swap did not update indices correctly")
 		}
+
+		// Rest of the test remains the same...
 	})
 
 	t.Run("taskHeap rejects invalid type in Push", func(t *testing.T) {
@@ -261,4 +245,99 @@ func TestTaskHeap(t *testing.T) {
 			t.Error("Expected heap to reject invalid type")
 		}
 	})
+}
+
+// mockTask implements the Task interface for testing
+type mockTask struct {
+	id       string
+	priority int
+}
+
+func (m *mockTask) Execute(ctx context.Context) (interface{}, error) {
+	return nil, nil
+}
+
+func (m *mockTask) ID() string {
+	return m.id
+}
+
+func (m *mockTask) Type() string {
+	return "mock"
+}
+
+func (m *mockTask) Priority() int {
+	return m.priority
+}
+
+func (m *mockTask) MaxRetries() int {
+	return 0
+}
+
+func (m *mockTask) Validate() error {
+	return nil
+}
+
+// TestTaskHeapImplementation tests the heap.Interface implementation for taskHeap
+func TestTaskHeapImplementation(t *testing.T) {
+	// Create a heap with some items
+	h := &taskHeap{
+		&taskItem{task: &mockTask{id: "task1", priority: 1}, priority: 1, index: 0},
+		&taskItem{task: &mockTask{id: "task2", priority: 2}, priority: 2, index: 1},
+		&taskItem{task: &mockTask{id: "task3", priority: 3}, priority: 3, index: 2},
+	}
+
+	// Test Len
+	if h.Len() != 3 {
+		t.Errorf("Length should be 3, got %d", h.Len())
+	}
+
+	// Test Less
+	if !h.Less(2, 1) {
+		t.Error("Item with higher priority should be 'less'")
+	}
+	if !h.Less(1, 0) {
+		t.Error("Item with higher priority should be 'less'")
+	}
+
+	// Save references to items before swap
+	item0 := (*h)[0]
+	item1 := (*h)[1]
+
+	// Test Swap
+	h.Swap(0, 1)
+
+	// Verify items were swapped properly
+	if (*h)[0] != item1 || (*h)[1] != item0 {
+		t.Error("Swap did not correctly swap elements")
+	}
+
+	// Verify indices are updated - they should match their positions in the heap
+	if (*h)[0].index != 0 || (*h)[1].index != 1 {
+		t.Error("Swap did not update indices correctly")
+	}
+
+	// Test Push
+	newItem := &taskItem{task: &mockTask{id: "task4", priority: 4}, priority: 4}
+	h.Push(newItem)
+	if h.Len() != 4 {
+		t.Errorf("Length should be 4 after Push, got %d", h.Len())
+	}
+	if (*h)[3] != newItem {
+		t.Error("Push item should be at the end")
+	}
+	if (*h)[3].index != 3 {
+		t.Errorf("Push should set index correctly, got %d", (*h)[3].index)
+	}
+
+	// Test Pop
+	popped := h.Pop()
+	last, ok := popped.(*taskItem)
+	if !ok {
+		t.Error("Pop should return a *taskItem")
+	} else if last.task.(*mockTask).id != "task4" {
+		t.Errorf("Pop should return last item, got %s", last.task.(*mockTask).id)
+	}
+	if h.Len() != 3 {
+		t.Errorf("Length should be 3 after Pop, got %d", h.Len())
+	}
 }

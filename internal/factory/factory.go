@@ -114,8 +114,8 @@ func (p *Pool[T]) Get(ctx context.Context) (T, error) {
 		return obj, nil
 	}
 
-	// Create a new object if we haven't reached max size
-	if !p.initialized || p.maxSize <= 0 || len(p.objects) < p.maxSize {
+	// Create a new object if we haven't reached max size or if max size is negative (no limit)
+	if !p.initialized || p.maxSize < 0 || (p.maxSize > 0 && len(p.objects) < p.maxSize) {
 		return p.factory.Create()
 	}
 
@@ -129,7 +129,8 @@ func (p *Pool[T]) Put(obj T) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	if p.maxSize <= 0 || len(p.objects) < p.maxSize {
+	// Add object back to pool if max size is negative (no limit) or we haven't reached it
+	if p.maxSize < 0 || (p.maxSize > 0 && len(p.objects) < p.maxSize) {
 		p.objects = append(p.objects, obj)
 	}
 }

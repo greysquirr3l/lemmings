@@ -1,3 +1,4 @@
+// Package worker provides implementations for task processing workers.
 package worker
 
 import (
@@ -10,7 +11,8 @@ import (
 	"github.com/greysquirr3l/lemmings/internal/factory"
 )
 
-// Pool manages a group of workers
+// Pool manages a group of workers.
+// It handles worker creation, task distribution, and worker scaling.
 type Pool struct {
 	sync.RWMutex
 	ctx           context.Context
@@ -26,7 +28,13 @@ type Pool struct {
 	workerWg      sync.WaitGroup
 }
 
-// NewPool creates a new worker pool
+// NewPool creates a new worker pool with the specified parameters.
+// The initial size determines how many workers are created at startup.
+// The max size controls the upper limit of workers in the pool.
+// The task and result channels are used for communication with workers.
+// The workerFactory is used to create new worker instances.
+//
+// Returns a pointer to the created Pool and any error encountered during initialization.
 func NewPool(ctx context.Context, initialSize, maxSize int, taskChan chan Task, resultChan chan Result,
 	workerFactory factory.WorkerFactory[Worker]) (*Pool, error) {
 
@@ -58,7 +66,10 @@ func NewPool(ctx context.Context, initialSize, maxSize int, taskChan chan Task, 
 	return p, nil
 }
 
-// Start initializes and starts the worker pool
+// Start initializes and starts the worker pool.
+// This creates the initial set of workers and prepares them to process tasks.
+//
+// Returns an error if the pool was already started or if worker initialization fails.
 func (p *Pool) Start() error {
 	p.Lock()
 	defer p.Unlock()
@@ -79,7 +90,8 @@ func (p *Pool) Start() error {
 	return nil
 }
 
-// Stop stops all workers in the pool
+// Stop stops all workers in the pool.
+// This waits for any currently executing tasks to complete before stopping the workers.
 func (p *Pool) Stop() {
 	p.Lock()
 	defer p.Unlock()
@@ -93,7 +105,8 @@ func (p *Pool) Stop() {
 	p.started = false
 }
 
-// addWorker creates and starts a new worker
+// addWorker creates and starts a new worker.
+// Returns an error if worker creation fails.
 func (p *Pool) addWorker() error {
 	id := int(atomic.AddInt32(&p.nextWorkerID, 1))
 
@@ -109,7 +122,8 @@ func (p *Pool) addWorker() error {
 	return nil
 }
 
-// removeWorker removes a worker from the pool
+// removeWorker removes a worker from the pool.
+// Returns true if a worker was successfully removed, false otherwise.
 func (p *Pool) removeWorker() bool {
 	if len(p.workers) == 0 {
 		return false
@@ -135,7 +149,7 @@ func (p *Pool) removeWorker() bool {
 	return false
 }
 
-// stopAllWorkers stops all workers in the pool
+// stopAllWorkers stops all workers in the pool.
 func (p *Pool) stopAllWorkers() {
 	for _, worker := range p.workers {
 		worker.Stop()
@@ -144,8 +158,10 @@ func (p *Pool) stopAllWorkers() {
 	p.workerWg.Wait()
 }
 
-// Scale adjusts the pool size
-// Fix: Reduce cyclomatic complexity by extracting functions
+// Scale adjusts the pool size by the specified delta.
+// A positive delta adds workers, a negative delta removes workers.
+//
+// Returns the number of workers added and removed.
 func (p *Pool) Scale(delta int) (added, removed int) {
 	p.Lock()
 	defer p.Unlock()
@@ -167,7 +183,8 @@ func (p *Pool) Scale(delta int) (added, removed int) {
 	return added, removed
 }
 
-// calculateNewSize determines the new pool size based on constraints
+// calculateNewSize determines the new pool size based on constraints.
+// It ensures the size remains within the min/max bounds.
 func (p *Pool) calculateNewSize(delta int) int {
 	newSize := len(p.workers) + delta
 	if newSize < 1 {
@@ -179,7 +196,8 @@ func (p *Pool) calculateNewSize(delta int) int {
 	return newSize
 }
 
-// scaleUp adds workers to the pool
+// scaleUp adds workers to the pool to reach the target size.
+// Returns the number of workers successfully added.
 func (p *Pool) scaleUp(targetSize int) int {
 	added := 0
 	currentSize := len(p.workers)
@@ -201,7 +219,8 @@ func (p *Pool) scaleUp(targetSize int) int {
 	return added
 }
 
-// scaleDown removes workers from the pool
+// scaleDown removes workers from the pool to reach the target size.
+// Returns the number of workers successfully removed.
 func (p *Pool) scaleDown(targetSize int) int {
 	removed := 0
 	currentSize := len(p.workers)
@@ -223,19 +242,19 @@ func (p *Pool) scaleDown(targetSize int) int {
 	return removed
 }
 
-// Size returns the current pool size
+// Size returns the current pool size (number of workers).
 func (p *Pool) Size() int {
 	p.RLock()
 	defer p.RUnlock()
 	return len(p.workers)
 }
 
-// GetActiveWorkerCount returns the number of currently active workers
+// GetActiveWorkerCount returns the number of currently active workers.
 func (p *Pool) GetActiveWorkerCount() int {
 	return p.Size()
 }
 
-// GetMaxSize returns the maximum allowed pool size
+// GetMaxSize returns the maximum allowed pool size.
 func (p *Pool) GetMaxSize() int {
 	p.RLock()
 	defer p.RUnlock()

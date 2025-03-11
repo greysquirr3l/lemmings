@@ -319,15 +319,12 @@ func TestResourceMonitor(t *testing.T) {
 		// Force memory stats
 		rm.stats.MemoryStats.UsagePercent = 20
 
+		// Make sure cooldown periods don't interfere with our test by setting them in the past
+		rm.lastScaleDown = time.Now().Add(-1 * time.Hour)
+		rm.lastScaleUp = time.Now().Add(-1 * time.Hour)
+
 		if !rm.ShouldScaleUp() {
 			t.Error("Expected ShouldScaleUp to return true for low memory usage")
-		}
-
-		// Test scale down delay affects scaling up
-		rm.RecordScaleDown()
-		// Should not scale up because we just scaled down
-		if rm.ShouldScaleUp() {
-			t.Error("Expected ShouldScaleUp to return false after recent scale down")
 		}
 
 		// Test memory above threshold
@@ -388,5 +385,53 @@ func TestForceGC(t *testing.T) {
 		ForceGC()
 
 		// Success is just not panicking
+	})
+}
+
+// Replace the TestResourceMonitorShouldScaleUp function with a direct approach
+
+func TestResourceMonitorShouldScaleUp(t *testing.T) {
+	t.Run("ShouldScaleUp returns true for low memory usage", func(t *testing.T) {
+		// Create monitor with memory below low watermark
+		monitor := NewResourceMonitor()
+
+		// Directly modify the memory usage in the existing stats
+		monitor.stats.MemoryStats.UsagePercent = 40.0
+
+		// When memory is low and no recent scale events, should return true
+		monitor.lastScaleDown = time.Now().Add(-1 * time.Hour) // Long time ago
+		monitor.lastScaleUp = time.Now().Add(-1 * time.Hour)   // Long time ago
+
+		if !monitor.ShouldScaleUp() {
+			t.Error("Expected ShouldScaleUp to return true for low memory usage with no recent scaling")
+		}
+
+		// But when we just scaled down, it should return false due to cooldown
+		monitor.lastScaleDown = time.Now() // Just happened
+		if monitor.ShouldScaleUp() {
+			t.Error("Expected ShouldScaleUp to return false after recent scale down")
+		}
+
+		// Same with recent scale-up
+		monitor.lastScaleDown = time.Now().Add(-1 * time.Hour) // Long time ago
+		monitor.lastScaleUp = time.Now()                       // Just scaled up
+		if monitor.ShouldScaleUp() {
+			t.Error("Expected ShouldScaleUp to return false after recent scale up")
+		}
+	})
+
+	t.Run("ShouldScaleUp returns false for high memory usage", func(t *testing.T) {
+		// If memory is high, should always return false regardless of timings
+		monitor := NewResourceMonitor()
+
+		// Set high memory usage
+		monitor.stats.MemoryStats.UsagePercent = 80.0
+
+		monitor.lastScaleDown = time.Now().Add(-1 * time.Hour) // Long time ago
+		monitor.lastScaleUp = time.Now().Add(-1 * time.Hour)   // Long time ago
+
+		if monitor.ShouldScaleUp() {
+			t.Error("Expected ShouldScaleUp to return false for high memory usage")
+		}
 	})
 }

@@ -1,4 +1,5 @@
-// Package utils provides internal utility functions and types for resource monitoring.
+// Package utils provides internal utility functions and types for resource monitoring
+// and system metrics collection.
 package utils
 
 import (
@@ -60,7 +61,8 @@ func NewSystemStats() *SystemStats {
 	}
 }
 
-// UpdateMemStats updates memory statistics
+// UpdateMemStats updates the memory statistics by collecting the latest data
+// from the Go runtime. It adds new entries to the history collections.
 func (s *SystemStats) UpdateMemStats() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -132,32 +134,31 @@ func (s *SystemStats) UpdateMemStats() {
 	s.LastUpdate = time.Now()
 }
 
-// GetMemUsagePercent returns the current memory usage percentage
+// GetMemUsagePercent returns the current memory usage percentage.
+// This is the percentage of total system memory currently in use.
 func (s *SystemStats) GetMemUsagePercent() float64 {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.MemoryStats.UsagePercent
 }
 
-// GetMemStats returns a copy of the current memory statistics
+// GetMemStats returns a copy of the current memory statistics.
 func (s *SystemStats) GetMemStats() MemStats {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.MemoryStats
 }
 
-// GetNumGoroutine returns the current number of goroutines
+// GetNumGoroutine returns the current number of goroutines.
 func (s *SystemStats) GetNumGoroutine() int {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.NumGoroutine
 }
 
-// GetMemoryTrend analyzes memory usage trend over the past samples
-// Returns a value between -1 and 1, where:
-// - Negative values indicate decreasing trend
-// - Positive values indicate increasing trend
-// - Values close to 0 indicate stable memory usage
+// GetMemoryTrend calculates and returns the memory usage trend.
+// A positive value indicates an increasing trend, negative indicates decreasing.
+// The value is based on a linear regression of recent memory usage data.
 func (s *SystemStats) GetMemoryTrend() float64 {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -203,7 +204,8 @@ func (s *SystemStats) GetMemoryTrend() float64 {
 	return normalizedSlope
 }
 
-// SuggestGC suggests whether garbage collection should be triggered
+// SuggestGC returns true if garbage collection is recommended.
+// This is based on memory usage percentage and threshold.
 func (s *SystemStats) SuggestGC(threshold float64) bool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -214,7 +216,7 @@ func (s *SystemStats) SuggestGC(threshold float64) bool {
 		(s.NumGoroutine > 10000 && s.MemoryStats.HeapObjects > 100000)
 }
 
-// GetMemoryHistory returns a copy of the memory history
+// GetMemoryHistory returns a copy of the memory history collection.
 func (s *SystemStats) GetMemoryHistory() []MemStats {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -224,7 +226,7 @@ func (s *SystemStats) GetMemoryHistory() []MemStats {
 	return history
 }
 
-// GetGoroutineHistory returns a copy of the goroutine history
+// GetGoroutineHistory returns a copy of the goroutine history collection.
 func (s *SystemStats) GetGoroutineHistory() []int {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -234,13 +236,15 @@ func (s *SystemStats) GetGoroutineHistory() []int {
 	return history
 }
 
-// ForceGC forces garbage collection
+// ForceGC forces a garbage collection.
+// This is useful when memory pressure is high and immediate GC is needed.
 func ForceGC() {
 	runtime.GC()
 	debug.FreeOSMemory()
 }
 
-// GetSimpleMemUsagePercent returns the current memory usage percentage without using SystemStats
+// GetSimpleMemUsagePercent returns the current memory usage percentage.
+// This is a simplified version that doesn't require a SystemStats instance.
 func GetSimpleMemUsagePercent() float64 {
 	var m runtime.MemStats
 	runtime.ReadMemStats(&m)

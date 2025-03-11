@@ -5,6 +5,9 @@
 // The manager handles task submission, worker scaling, resource monitoring, and
 // provides statistics about task processing. It's designed to be the primary
 // interface point for applications using the lemmings library.
+//
+// It implements dynamic scaling based on system resource usage, graceful shutdowns,
+// and provides detailed statistics about task execution and resource utilization.
 package manager
 
 import (
